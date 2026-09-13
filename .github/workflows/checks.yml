@@ -1,0 +1,74 @@
+name: checks
+
+# Runs the same four instruments used locally. They exist because each one
+# caught a real defect that the others missed: verify.py found 1,045 pages
+# announcing the wrong catalogue, phone_audit.py found every watch page
+# scrolling 528px sideways, behaviour_test.py found a status pill that could
+# never appear, and the syntax gate would have caught a mangled import line
+# twice in one day.
+# This repo holds no code. It exists so Actions minutes bill to GirisankarG
+# instead of akv2011, which owner-billing makes impossible in one repo, and it
+# is PUBLIC because GitHub-hosted runners are unmetered on public repos, so it
+# cannot exceed a quota.
+#
+# Push events on the code repo cannot reach here without a webhook, so the
+# triggers are a schedule and a manual run. repository_dispatch can be added
+# later if the code repo should kick this off on every push.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out the code repo
+        uses: actions/checkout@v4
+        with:
+          repository: akv2011/stream-site
+          token: ${{ secrets.CODE_REPO_PAT }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install
+        run: |
+          pip install --quiet -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      # Cheapest gate first: a file that does not parse fails in seconds
+      # rather than after a two-minute build.
+      - name: Python syntax
+        run: |
+          python - <<'PY'
+          import ast, pathlib, sys
+          bad = 0
+          for f in list(pathlib.Path('.').rglob('*.py')):
+              if '.git' in f.parts:
+                  continue
+              try:
+                  ast.parse(f.read_text())
+              except SyntaxError as e:
+                  print(f"{f}:{e.lineno}: {e.msg}")
+                  bad += 1
+          sys.exit(1 if bad else 0)
+          PY
+
+      # Images are gitignored, so the build runs without artwork. Every check
+      # below asserts markup, behaviour or layout, never pixels, so this is a
+      # real run rather than a smoke test.
+      - name: Build
+        run: python site/build.py --base-url https://flixshows.me
+
+      - name: Structure, SEO and contrast
+        run: python scripts/verify.py
+
+      - name: Phone layout
+        run: python scripts/phone_audit.py 360 390 414
+
+      - name: Behaviour
+        run: python scripts/behaviour_test.py
