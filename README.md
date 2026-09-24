@@ -1,6 +1,7 @@
 # stream-site-ci
 
-Workflows only. The code lives in `akv2011/stream-site`, which is private.
+Workflows for FlixShows (flixshows.me). The code lives in `akv2011/stream-site`,
+which is private.
 
 ## Why two repos
 
@@ -10,26 +11,64 @@ private on akv2011, minutes on GirisankarG" cannot be one repo.
 
 This repo is **public** on purpose: GitHub-hosted runners are unmetered on
 public repos, so no quota can be exceeded. Nothing secret belongs in a workflow
-file here.
+file or a log here, and the scripts print no addresses and no source names.
 
-## What it runs
+## What runs
 
-The four checks from the code repo, cheapest gate first, each earning its place
-by catching something the others missed:
+| Workflow | Cadence | Needs private code | Asserts |
+|---|---|---|---|
+| `live-check.yml` | hourly | **no** | the served site: home, robots, sitemap band, stratified sample of advertised pages, real 404s, image project cache |
+| `checks.yml` | daily | yes (`CODE_REPO_PAT`) | build, `verify.py`, `phone_audit.py`, `behaviour_test.py` |
+| `watchdog.yml` | every 6h | no | each check's latest run reached its own code, and keeps the schedules enabled |
 
-| Check | Found |
+`live-check.yml` needs no private code so the live signal survives whatever
+happens to the token. That split exists because of what happened next.
+
+## What went wrong, so it is not repeated
+
+**From 2026-09-13 to 09-23, all ten runs of `checks.yml` died at step one** with
+"Input required and not supplied: token". `CODE_REPO_PAT` had never been
+created. GitHub's failure notice went to the account that owns this repo, which
+nobody reads, so the four build checks never ran once and nothing said so. Now:
+
+- `checks.yml` refuses to start and names every missing secret.
+- Every workflow ends in a `Report` step (`if: always()`) that mails the
+  failing step by name. A missing summary is mailed as "never reached its own
+  assertions", never read as "nothing wrong".
+- `watchdog.yml` reads each latest run's **step list**, not its badge, and
+  requires the probe step to have concluded. A skipped probe step is "did not
+  run", whatever colour the run is.
+
+**GitHub disables scheduled workflows on a public repo after 60 days without
+repository activity.** This repo is rarely pushed. The watchdog re-enables every
+workflow on each run, but GitHub does not document whether that resets the
+timer, and the watchdog cannot report its own disablement. An outside watch is
+still an open item.
+
+## Rules for this repo
+
+- One cron per workflow file. Never gate a job on `github.event.schedule`: on
+  the sister site a job gated that way was skipped on every run for four days
+  while the workflow reported success.
+- A check writes `{"suite", "ok", "problems", "measured"}` and exits non-zero on
+  any problem. "Measured nothing" is a problem, never a pass.
+- Compare against `baseline.json` (committed, raised deliberately with a reason),
+  never against yesterday's output.
+- Mail subject is `[FlixShows] <suite>: <first problem>`, built from the finding,
+  never a bare count.
+- Each check ships with mutation tests in `tests/` that break one thing and
+  assert it goes red. The workflow runs them before the check.
+
+## Setup still needed (Arun)
+
+Repository secrets on **GirisankarG/stream-site-ci**, Settings > Secrets and
+variables > Actions:
+
+| Secret | Value |
 |---|---|
-| Python syntax | a mangled import line, twice in one day |
-| `verify.py` | 1,045 pages announcing the wrong catalogue |
-| `phone_audit.py` | every watch page scrolling 528px sideways on a phone |
-| `behaviour_test.py` | a status pill that could never appear |
+| `CODE_REPO_PAT` | fine-grained token, scoped to `akv2011/stream-site`, **Contents: read** only |
+| `RESEND_API_KEY` | the Resend key already used by manhwa-reader |
+| `ALERT_EMAIL` | where alerts go |
+| `ALERT_FROM` | a sender on a domain verified in Resend, e.g. `FlixShows CI <sync@specterscans.com>` |
 
-## Setup still needed
-
-`CODE_REPO_PAT` as a repository secret here: a fine-grained token scoped to
-`akv2011/stream-site` with **Contents: read** only. Arun creates and rotates it;
-without it the checkout step cannot read the private code repo.
-
-Worth adding later: a failure mail step. GitHub's own failure notice goes to the
-account owning this repo, which is not an inbox anyone reads. See
-`specter-wiki/docs/ci.md` for the pattern.
+Until they exist every run is red and says which ones are missing.
