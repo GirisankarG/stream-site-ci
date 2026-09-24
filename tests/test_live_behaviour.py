@@ -10,7 +10,18 @@ LIVE = {"home_title": "FlixShows - Find it. Press play.", "watch_title": "Iron M
         "rails": {"rails": 17, "unwired": 0, "scrollable": 14, "dots_empty": 0, "left_enabled_at_start": 0},
         "step": {"pitch": 188, "scrollLeft": 1316}, "search_results": 13,
         "search_tiers": {"search-hot.json": 200, "search-index.json": 200},
-        "home_errors": [], "watch_errors": [], "watch_iframes": 0}
+        "home_errors": [], "watch_errors": [], "series_errors": [], "watch_iframes": 0,
+        "hero": {"gates": {"wide": True, "hover": True, "motion_ok": True, "save_data_off": True,
+                           "net_4g": True},
+                 "mounted": True, "host": "www.youtube-nocookie.com", "muted": True, "aria_hidden": "true"},
+        "phone_hero_mounted": False,
+        "peek_before": 0, "peek": {"complete": True, "width": 780},
+        "watch_page": {"chip": True, "chip_hidden": True, "chip_display": "none", "frame_iframes": 0},
+        "series_page": {"chip": True, "chip_hidden": True, "chip_display": "none", "frame_iframes": 0},
+        "home_hidden_visible": [], "watch_hidden_visible": [], "series_hidden_visible": [],
+        "ep_before": {"epanel_hidden": True, "epopen_expanded": "false", "epq": True, "srcs_open": False},
+        "ep_after": {"epanel_hidden": False, "rows": 7, "generic_names": 0, "no_name": 0,
+                     "no_runtime": 0, "watching": 1}}
 
 
 def m(**over):
@@ -77,3 +88,91 @@ def test_full_index_failing_fires_even_though_the_hot_tier_answers():
 
 def test_search_that_requests_no_index_fires():
     assert any("never requested" in p for p in B.judge(m(search_tiers={})))
+
+
+# ------------------------------------------------------------ hero trailer
+
+def hero(**kw):
+    return m(hero={**LIVE["hero"], **kw})
+
+
+def test_trailer_that_mounted_but_never_played_passes():
+    """MS_UI's trap: .playing and a visible mute button come from YouTube's own load
+    handler, which never fires in headless. Neither is part of the measurement."""
+    assert B.judge(LIVE) == []
+
+
+def test_trailer_that_never_mounted_fires():
+    assert any("never mounted" in p for p in B.judge(hero(mounted=False, host=None, muted=None)))
+
+
+def test_a_gate_the_runner_fails_names_the_runner_not_the_site():
+    gates = {**LIVE["hero"]["gates"], "net_4g": False}
+    probs = B.judge(hero(gates=gates, mounted=False))
+    assert len([p for p in probs if "hero" in p]) == 1
+    assert any("runner fails its gate" in p and "net_4g" in p for p in probs)
+
+
+def test_trailer_with_sound_or_wrong_host_fires():
+    assert any("mute=1" in p for p in B.judge(hero(muted=False)))
+    assert any("youtube-nocookie" in p for p in B.judge(hero(host="www.youtube.com")))
+
+
+def test_trailer_on_a_phone_fires():
+    assert any("390px" in p for p in B.judge(m(phone_hero_mounted=True)))
+
+
+# ----------------------------------------------------------- hover preview
+
+def test_no_peek_after_hover_fires():
+    assert any(".peek" in p for p in B.judge(m(peek=None)))
+
+
+def test_peek_with_unloaded_backdrop_fires():
+    assert any("did not load" in p for p in B.judge(m(peek={"complete": True, "width": 0})))
+
+
+def test_peek_before_hover_fires():
+    assert any("before anything was hovered" in p for p in B.judge(m(peek_before=3)))
+
+
+# ------------------------------------------------------ pill and [hidden]
+
+def test_pill_visible_despite_hidden_attribute_fires():
+    """The real bug: hidden=true while a class forced display:inline-flex."""
+    page = {**LIVE["watch_page"], "chip_display": "inline-flex"}
+    assert any("VISIBLE before play" in p for p in B.judge(m(watch_page=page)))
+
+
+def test_any_hidden_element_that_renders_fires():
+    assert any("[hidden] element" in p for p in B.judge(m(home_hidden_visible=["#heromute"])))
+
+
+def test_missing_pill_fires():
+    assert any("no #chip" in p for p in B.judge(m(series_page={"chip": False})))
+
+
+# ---------------------------------------------------------- episode panel
+
+def test_panel_open_on_load_fires():
+    before = {**LIVE["ep_before"], "epanel_hidden": False}
+    assert any("not shut on load" in p for p in B.judge(m(ep_before=before)))
+
+
+def test_generic_episode_names_fire_on_the_named_fixture():
+    after = {**LIVE["ep_after"], "generic_names": 7}
+    assert any("have no real name" in p for p in B.judge(m(ep_after=after)))
+
+
+def test_panel_that_does_not_open_fires():
+    after = {**LIVE["ep_after"], "epanel_hidden": True}
+    assert any("did not open" in p for p in B.judge(m(ep_after=after)))
+
+
+def test_watching_mark_must_be_exactly_one():
+    after = {**LIVE["ep_after"], "watching": 0}
+    assert any("WATCHING" in p for p in B.judge(m(ep_after=after)))
+
+
+def test_series_page_error_fires():
+    assert any("series page threw" in p for p in B.judge(m(series_errors=["ReferenceError: x"])))
