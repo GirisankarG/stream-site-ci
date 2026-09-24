@@ -1,0 +1,60 @@
+name: Live site (flixshows.me)
+
+# Checks the SERVED site hourly: home, robots, sitemap band and cleanliness, a
+# stratified sample of advertised pages, real 404s on every path type, and the
+# separate img.flixshows.me project. See scripts/live_check.py for why each
+# assertion is shaped the way it is.
+#
+# Needs NO private code, on purpose. checks.yml cannot run without
+# CODE_REPO_PAT; this one can never die at a private checkout, so the live
+# signal survives whatever happens to the token. Public repo, so the runner
+# minutes are unmetered and an hourly cadence costs nothing.
+#
+# One cron per file, never `if:` gating on the schedule string: on the sister
+# site a job gated that way was skipped on every run for four days while the
+# workflow reported success.
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-check
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Mutation tests first. A checker whose detectors silently stopped firing
+      # would otherwise certify the site as healthy.
+      - name: Prove the checker still fires
+        id: tests
+        run: pip install --quiet pytest && python -m pytest tests -q
+
+      - name: Check the live site
+        id: live
+        if: steps.tests.outcome == 'success'
+        run: python scripts/live_check.py --summary summary.json
+
+      # Runs whatever happened above. A missing summary is itself mailed, naming
+      # the step that failed, so "never ran" can never read as "nothing wrong".
+      - name: Report
+        if: always()
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: python scripts/report.py --summary summary.json --suite "Live site"

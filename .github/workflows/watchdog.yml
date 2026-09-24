@@ -1,0 +1,48 @@
+name: watchdog
+
+# Asserts every scheduled check here actually REACHED its own code recently, by
+# reading each latest run's step list rather than its badge, and calls the
+# workflow enable endpoint so GitHub's 60-day inactivity rule for public repos
+# does not silently switch the schedules off. See scripts/watchdog.py.
+#
+# It cannot report its own disablement. That needs a watch from outside this
+# repo, which is an open item, not a solved one.
+
+on:
+  schedule:
+    - cron: '41 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write          # read runs, and re-enable workflows (keepalive)
+  contents: read
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Did every check reach its own code
+        id: watchdog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/watchdog.py --summary summary.json
+
+      - name: Report
+        if: always()
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: python scripts/report.py --summary summary.json --suite "Watchdog"
