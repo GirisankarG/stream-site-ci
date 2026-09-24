@@ -45,8 +45,9 @@ import urllib.request
 WATCHED = {
     "live-check.yml": ("Check the live site", 8),
     "checks.yml": ("Build", 50),
+    "live-behaviour.yml": ("Check the live behaviour", 50),
 }
-KEEPALIVE = ["live-check.yml", "checks.yml", "watchdog.yml"]
+KEEPALIVE = ["live-check.yml", "checks.yml", "live-behaviour.yml", "watchdog.yml"]
 
 
 def api(method: str, path: str) -> tuple[int, object]:
