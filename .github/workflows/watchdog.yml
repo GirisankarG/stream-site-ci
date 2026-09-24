@@ -38,6 +38,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/watchdog.py --summary summary.json
 
+      # Mail state: a failure is mailed when it starts, changes kind or recovers,
+      # and at most daily while unchanged. The run stays red regardless.
+      - uses: actions/cache/restore@v4
+        if: always()
+        with:
+          path: mailstate
+          key: watchdog-mail-${{ github.run_id }}
+          restore-keys: watchdog-mail-
+
       - name: Report
         if: always()
         env:
@@ -45,4 +54,10 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
           ALERT_FROM: ${{ secrets.ALERT_FROM }}
-        run: python scripts/report.py --summary summary.json --suite "Watchdog"
+        run: python scripts/report.py --summary summary.json --suite "Watchdog" --state mailstate/mail.json
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: mailstate
+          key: watchdog-mail-${{ github.run_id }}

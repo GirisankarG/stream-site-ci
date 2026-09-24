@@ -47,3 +47,26 @@ def test_renamed_step_fires_rather_than_passing():
 
 def test_in_progress_run_is_not_judged_on_its_partial_steps():
     assert W.judge("checks.yml", "Build", 50, run(status="in_progress"), None, NOW) == []
+
+
+def test_workflow_state_is_read_before_the_keepalive(monkeypatch, tmp_path):
+    """disabled_inactivity is the only place GitHub records the 60-day rule firing."""
+    import json
+    calls = []
+
+    def fake_api(method, path):
+        calls.append((method, path))
+        if path.endswith("/runs?per_page=1&exclude_pull_requests=true"):
+            return 200, {"workflow_runs": []}
+        if method == "GET" and path.startswith("/actions/workflows/"):
+            return 200, {"state": "disabled_inactivity"}
+        return 204, None
+
+    monkeypatch.setattr(W, "api", fake_api)
+    monkeypatch.setattr(sys, "argv", ["watchdog.py", "--summary", str(tmp_path / "s.json")])
+    assert W.main() == 1
+    probs = json.loads((tmp_path / "s.json").read_text())["problems"]
+    assert any("disabled_inactivity" in p and "keepalive did not stop" in p for p in probs)
+    gets = [i for i, c in enumerate(calls) if c == ("GET", "/actions/workflows/live-check.yml")]
+    puts = [i for i, c in enumerate(calls) if c == ("PUT", "/actions/workflows/live-check.yml/enable")]
+    assert gets and puts and gets[0] < puts[0], "state must be read BEFORE re-enabling hides it"

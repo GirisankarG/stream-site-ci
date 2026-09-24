@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -95,6 +96,45 @@ def failed_steps(steps: dict[str, str]) -> list[str]:
     if skipped:
         out.append(f"{len(skipped)} later step(s) skipped as a result: {', '.join(skipped)}")
     return out
+
+
+REMIND_H = 24     # a failure that has not changed is re-mailed at most this often
+
+
+def problem_class(p: str) -> str:
+    """What KIND of problem this is, stable across runs.
+
+    Counts change, sampled URLs are random and quoted values move, so the raw
+    text of an unchanged failure differs every hour. Strip those and what is left
+    names the failure: "sitemap holds N URLs, under the committed floor" stays the
+    same class whether N is 12 or 40.
+    """
+    p = re.sub(r"https?://\S+", "<url>", p)
+    p = re.sub(r"'[^']*'|\"[^\"]*\"|\[[^\]]*\]", "<v>", p)
+    p = re.sub(r"\d+", "#", p)
+    return re.sub(r"\s+", " ", p).strip()[:120]
+
+
+def decide(prev: dict | None, red: bool, problems: list[str], now: float) -> tuple[str, list[str]]:
+    """Pure: ("new" | "worse" | "still" | "recovered" | "quiet", problems to lead with).
+
+    The run's red/green is untouched by this; only whether a MAIL goes out. An
+    hourly check that mails every red run sends 24 identical mails a day for one
+    standing fault and the inbox learns to ignore it. So mail on a change, and
+    remind at most once a REMIND_H while nothing changes.
+    """
+    classes = {problem_class(p) for p in problems}
+    was_red = bool(prev and prev.get("red"))
+    if not red:
+        return ("recovered", []) if was_red else ("quiet", [])
+    if not was_red:
+        return "new", problems
+    fresh = [p for p in problems if problem_class(p) not in set(prev.get("classes", []))]
+    if fresh:
+        return "worse", fresh + [p for p in problems if p not in fresh]
+    if now - float(prev.get("last_mail") or 0) >= REMIND_H * 3600:
+        return "still", problems
+    return "quiet", []
 
 
 def load_summary(path: str) -> dict | None:
@@ -165,12 +205,24 @@ def send(subject: str, html: str) -> bool:
     return False
 
 
+def _write_state(path: str, state: dict) -> None:
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(state, f)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--summary", default="", help="JSON written by the check; omit to "
                     "judge from step outcomes alone")
     ap.add_argument("--suite", required=True, help='e.g. "Site check"; goes in the subject')
     ap.add_argument("--dry-run", action="store_true", help="print, never send")
+    ap.add_argument("--state", default="",
+                    help="JSON carried between runs (Actions cache). With it, a failure is "
+                         "mailed when it starts, changes kind, or recovers, and re-mailed at "
+                         "most once a day while unchanged. The run stays red either way")
     ap.add_argument("--private-detail", action="store_true",
                     help="log counts only; the problems themselves go to the mail alone. "
                          "For checks whose findings name a source or its URLs, since this "
@@ -214,10 +266,40 @@ def main() -> int:
             return 1   # a notification nobody can receive is a failure, not a success
         return 0
     if s.get("ok") and not problems:
+        if a.state:
+            try:
+                prev = json.loads(open(a.state).read())
+            except (FileNotFoundError, json.JSONDecodeError):
+                prev = None
+            if decide(prev, False, [], time.time())[0] == "recovered":
+                subject = f"[{PRODUCT}] {suite}: recovered, all checks pass again"
+                print(f"[report] {subject}")
+                if not a.dry_run:
+                    send(subject, f"<h2>{subject}</h2><p><a href=\"{run_url}\">Run log</a></p>")
+            _write_state(a.state, {"red": False, "classes": [], "last_mail": 0})
         print(f"[report] {suite}: ok, nothing to mail")
         return 0
 
-    subject = subject_for(suite, problems)
+    red = True
+    lead = problems
+    if a.state:
+        prev = None
+        try:
+            prev = json.loads(open(a.state).read())
+        except (FileNotFoundError, json.JSONDecodeError):
+            prev = None
+        verdict, lead = decide(prev, red, problems, time.time())
+        state = {"red": True, "classes": sorted({problem_class(p) for p in problems}),
+                 "last_mail": (prev or {}).get("last_mail", 0)}
+        if verdict == "quiet":
+            print(f"[report] {suite}: still failing, same kind as the mail sent "
+                  f"{(time.time() - float(state['last_mail'])) / 3600:.1f}h ago; not re-mailed. "
+                  f"{len(problems)} problem(s), run stays red")
+            _write_state(a.state, state)
+            return 1
+        if verdict == "still":
+            lead = [f"still failing: {lead[0]}"] + lead[1:]
+    subject = subject_for(suite, lead)
     if a.private_detail:
         # The subject carries the first problem too, so it stays out of the log.
         print(f"[report] {suite}: {len(problems)} problem(s), detail in the mail only")
@@ -228,7 +310,11 @@ def main() -> int:
     if a.dry_run:
         print("[report] dry run, not sent")
         return 1
-    send(subject, html_body(suite, problems, s.get("measured", {}), run_url))
+    sent = send(subject, html_body(suite, lead, s.get("measured", {}), run_url))
+    if a.state:
+        # Only a mail that landed moves the reminder clock; a failed send retries next run.
+        state["last_mail"] = time.time() if sent else state["last_mail"]
+        _write_state(a.state, state)
     return 1                       # red is the signal that persists if the mail fails
 
 
