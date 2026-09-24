@@ -119,6 +119,14 @@ def main() -> int:
         M[wf] = (f"last run {run['created_at']} {run.get('conclusion')}" if run else "never")
 
     for wf in KEEPALIVE:
+        # GitHub records the 60-day rule only here: state becomes
+        # "disabled_inactivity" and nothing else announces it.
+        c0, meta = api("GET", f"/actions/workflows/{wf}")
+        wstate = (meta or {}).get("state", f"unknown (HTTP {c0})")
+        M[f"state {wf}"] = wstate
+        if c0 == 200 and wstate != "active":
+            P.append(f"{wf} was {wstate}; re-enabling it now. If this says disabled_inactivity, "
+                     "the keepalive did not stop GitHub's 60-day rule and an outside watch is needed")
         code, _ = api("PUT", f"/actions/workflows/{wf}/enable")
         M[f"keepalive {wf}"] = code
         if code not in (200, 204):
