@@ -93,3 +93,16 @@ def test_missing_secrets_are_named_and_skips_do_not_bury_the_cause(monkeypatch, 
     subject = [l for l in out.splitlines() if l.startswith("[report] subject:")][0]
     assert "require-secrets: failure, not set: CODE_REPO_PAT ALERT_FROM" in subject
     assert subject.endswith("(+1 more)"), "four skips must collapse into one line"
+
+
+def test_private_detail_keeps_findings_out_of_the_public_log(tmp_path, monkeypatch, capsys):
+    """A discovery finding names the source. This repo's logs are public."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"suite": "Discovery", "ok": False, "measured": {},
+                             "problems": ["source-host.example lists 100 titles we do not carry"]}))
+    monkeypatch.setattr(sys, "argv", ["report.py", "--summary", str(p), "--suite", "Discovery",
+                                      "--private-detail", "--dry-run"])
+    assert R.main() == 1
+    out = capsys.readouterr().out
+    assert "source-host.example" not in out
+    assert "Discovery: 1 problem(s), detail in the mail only" in out
