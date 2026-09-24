@@ -104,6 +104,16 @@ jobs:
         working-directory: code
         run: python site/build.py --base-url https://flixshows.me
 
+      # Deploys run from a laptop, not from git. On 2026-09-24 the live site
+      # carried 98 titles no pushed commit builds, so these checks were testing
+      # a site nobody served. Same-build comparison: 0 difference when in sync.
+      - name: Deployed site matches pushed code
+        id: drift
+        if: steps.build.outcome == 'success'
+        run: >
+          python scripts/drift_check.py --built code/dist/search-index.json
+          --live https://flixshows.me/search-index.json --summary drift.json
+
       - name: Structure, SEO and contrast
         id: verify
         if: steps.build.outcome == 'success'

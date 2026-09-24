@@ -50,6 +50,11 @@ HINTS = {
     "tests": "the checker's own mutation tests failed, so its detectors cannot be trusted "
              "and the live check was not run",
     "install": "dependency install failed, nothing was checked",
+    "drift": "the live site is not built from the pushed code (titles in the run log); "
+             "push akv2011/stream-site so these checks test what readers are served",
+    "crawl": "the source did not answer this runner, which is what a datacenter IP being "
+             "walled looks like. Not measured: this is NOT 'no new titles'",
+    "discover": "discovery could not compare the source with the site",
 }
 
 
@@ -113,11 +118,14 @@ def subject_for(suite: str, problems: list[str]) -> str:
     return f"[{PRODUCT}] {suite}: {head}{more}"
 
 
-def html_body(suite: str, problems: list[str], measured: dict, run_url: str) -> str:
+def html_body(suite: str, problems: list[str], measured: dict, run_url: str,
+              notice: bool = False) -> str:
     esc = lambda s: (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
     items = "".join(f"<li>{esc(p)}</li>" for p in problems)
     meas = "".join(f"<li><code>{esc(k)}</code> = {esc(v)}</li>" for k, v in measured.items())
-    return (f"<h2>{esc(PRODUCT)}: {esc(suite)} found {len(problems)} problem(s)</h2>"
+    head = (f"{esc(PRODUCT)}: {esc(suite)}" if notice
+            else f"{esc(PRODUCT)}: {esc(suite)} found {len(problems)} problem(s)")
+    return (f"<h2>{head}</h2>"
             f"<ul>{items}</ul>"
             f"<p>Measured:</p><ul>{meas or '<li>(nothing measured)</li>'}</ul>"
             f"<p><a href=\"{esc(run_url)}\">Run log</a></p>")
@@ -187,11 +195,24 @@ def main() -> int:
             why = (bad_steps[0] if bad_steps else
                    "every step reported success but no summary was written")
             s = {"suite": a.suite, "ok": False, "measured": steps,
-                 "problems": [f"{a.suite} wrote no summary, so it never reached its own "
-                              f"assertions. {why}. Nothing was measured."]}
+                 "problems": [f"{why}. {a.suite} never reached its own assertions, "
+                              "so nothing was measured."]}
 
     suite = s.get("suite") or a.suite
     problems = [str(p) for p in s.get("problems", [])]
+    notify = [str(n) for n in s.get("notify", [])]
+    if s.get("ok") and not problems and notify:
+        # Green, but worth hearing: e.g. discovery's "3 new titles since the last
+        # run". Mailed, and the run stays green, because nothing is broken.
+        subject = subject_for(suite, notify)
+        if a.private_detail:
+            print(f"[report] {suite}: notification ({len(notify)} line(s)), detail in the mail only")
+        else:
+            print(f"[report] notify: {subject}")
+        if not a.dry_run and not send(subject, html_body(suite, notify, s.get("measured", {}),
+                                                         run_url, notice=True)):
+            return 1   # a notification nobody can receive is a failure, not a success
+        return 0
     if s.get("ok") and not problems:
         print(f"[report] {suite}: ok, nothing to mail")
         return 0

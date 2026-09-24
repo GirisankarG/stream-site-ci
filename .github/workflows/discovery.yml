@@ -1,0 +1,122 @@
+name: discovery
+
+# What landed at the source that we do not carry: new titles, series that
+# gained episodes, titles the source dropped, and recent TMDB releases. First
+# real run 2026-09-24: 71 new titles, 325 series behind, 46 TMDB releases.
+#
+# The finding is a NOTIFICATION, not a failure. scripts/digest.py compares with
+# the previous run by stable id and mails only what moved, green, so the same
+# 400-line backlog does not arrive every morning until it is filtered. Red means
+# only that the measurement itself could not be trusted.
+#
+# MANUAL DISPATCH ONLY until kisskh_crawl.py lives in akv2011/stream-site at
+# scripts/crawl/. Scheduled before that, it would fail daily for a known reason
+# and teach the inbox to ignore [FlixShows]. Add `schedule: - cron: '5 8 * * *'`
+# (one cron, this file only) in the commit that confirms the first green run.
+#
+# Logs are public: every script here prints counts only, and the report runs
+# --private-detail so titles reach the mail and nothing else. If the source
+# walls GitHub's IP range, the crawl step fails loudly and the mail says "not
+# measured", never "0 new titles".
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discovery
+  cancel-in-progress: false
+
+jobs:
+  discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to start without the secrets
+        id: require-secrets
+        env:
+          CODE_REPO_PAT: ${{ secrets.CODE_REPO_PAT }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: |
+          missing=""
+          for v in CODE_REPO_PAT TMDB_API_KEY RESEND_API_KEY ALERT_EMAIL ALERT_FROM; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+          if [ -n "$missing" ]; then
+            echo "::error::not set on this repository:$missing"
+            exit 1
+          fi
+
+      - name: Check out akv2011/stream-site
+        id: checkout-code
+        uses: actions/checkout@v4
+        with:
+          repository: akv2011/stream-site
+          ref: main
+          token: ${{ secrets.CODE_REPO_PAT }}
+          path: code
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        id: install
+        run: pip install --quiet httpx pytest
+
+      - name: Prove the digest still fires
+        id: tests
+        run: python -m pytest tests/test_digest.py tests/test_report.py -q
+
+      # Yesterday's id sets. Missing on the first run or after 7 days unused
+      # (the cache evicts them); the digest then says "baseline", not "new".
+      - uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: discovery-state-${{ github.run_id }}
+          restore-keys: discovery-state-
+
+      - name: List the source's titles
+        id: crawl
+        working-directory: code
+        run: python scripts/crawl/kisskh_crawl.py --list-only > "$RUNNER_TEMP/crawl.json"
+
+      - name: Compare the source and TMDB with the site
+        id: discover
+        working-directory: code
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: >
+          python scripts/coverage_check.py --crawl-list "$RUNNER_TEMP/crawl.json"
+          --summary "$GITHUB_WORKSPACE/discovery.json"
+
+      # Runs if discovery ran at all, including when it reported it could not
+      # measure, so that failure is mailed rather than lost.
+      - name: What moved since the last run
+        id: digest
+        if: steps.discover.outcome == 'success' || steps.discover.outcome == 'failure'
+        run: python scripts/digest.py --discovery discovery.json --state state/state.json --out report.json
+
+      # Only a trustworthy run becomes tomorrow's baseline.
+      - uses: actions/cache/save@v4
+        if: steps.digest.outcome == 'success'
+        with:
+          path: state
+          key: discovery-state-${{ github.run_id }}
+
+      - name: Report
+        if: always()
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: python scripts/report.py --summary report.json --suite Discovery --private-detail
