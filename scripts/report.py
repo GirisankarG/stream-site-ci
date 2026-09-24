@@ -41,6 +41,7 @@ import urllib.error
 import urllib.request
 
 PRODUCT = "FlixShows"
+SITE = "https://flixshows.me"   # in every body: first question is "the site, or the checker?"
 
 # What a failed step MEANS, so the mail says what to do rather than "failure".
 HINTS = {
@@ -168,7 +169,8 @@ def html_body(suite: str, problems: list[str], measured: dict, run_url: str,
     return (f"<h2>{head}</h2>"
             f"<ul>{items}</ul>"
             f"<p>Measured:</p><ul>{meas or '<li>(nothing measured)</li>'}</ul>"
-            f"<p><a href=\"{esc(run_url)}\">Run log</a></p>")
+            f"<p>Served site: <a href=\"{SITE}\">{SITE}</a> &middot; "
+            f"<a href=\"{esc(run_url)}\">Run log</a></p>")
 
 
 def send(subject: str, html: str) -> bool:

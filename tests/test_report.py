@@ -125,3 +125,8 @@ def test_notification_nobody_can_receive_is_red(tmp_path, monkeypatch):
     p.write_text(json.dumps({"suite": "Discovery", "ok": True, "problems": [], "notify": ["x"]}))
     monkeypatch.setattr(sys, "argv", ["report.py", "--summary", str(p), "--suite", "Discovery"])
     assert R.main() == 1
+
+
+def test_every_mail_body_names_the_served_site():
+    """MS_UI's first question on any alert: is it the site or the checker?"""
+    assert "https://flixshows.me" in R.html_body("Live site", ["x"], {}, "https://run")

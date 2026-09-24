@@ -1,0 +1,72 @@
+name: Live behaviour (flixshows.me in a browser)
+
+# Drives the SERVED site in headless Chromium and asserts the effect each
+# interactive feature leaves: rails wired and stepping whole cards, dots and
+# arrow state, both search tiers loading and returning results, no uncaught
+# page errors, no player iframe before a click. See scripts/live_behaviour.py.
+#
+# Every behaviour check before this ran against dist/ on a laptop, never the
+# live site. The rails and the hero trailer both shipped dead and green.
+#
+# Daily, not hourly: a browser run is heavier than live-check.yml's HTTP pass.
+# Needs no private code. Public repo, so unmetered.
+
+on:
+  schedule:
+    - cron: '47 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-behaviour
+  cancel-in-progress: false
+
+jobs:
+  behaviour:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        id: install
+        run: |
+          pip install --quiet playwright pytest
+          python -m playwright install --with-deps chromium
+
+      - name: Prove the checker still fires
+        id: tests
+        run: python -m pytest tests/test_live_behaviour.py -q
+
+      - name: Check the live behaviour
+        id: behaviour
+        if: steps.tests.outcome == 'success'
+        run: python scripts/live_behaviour.py --summary summary.json
+
+      - uses: actions/cache/restore@v4
+        if: always()
+        with:
+          path: mailstate
+          key: behaviour-mail-${{ github.run_id }}
+          restore-keys: behaviour-mail-
+
+      - name: Report
+        if: always()
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: python scripts/report.py --summary summary.json --suite "Live behaviour" --state mailstate/mail.json
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: mailstate
+          key: behaviour-mail-${{ github.run_id }}
