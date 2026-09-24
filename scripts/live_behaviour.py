@@ -18,8 +18,23 @@ EFFECT each feature leaves behind, never that its setup ran:
 - every scrollable rail has dots, and starts with its left arrow disabled; both
   were wrong for the entire time the rails were inert, so either catches it
 - search returns results for a title we carry
-- no uncaught page error on the home or a watch page
+- no uncaught page error on any page visited
 - a watch page has no iframe before a click: players mount only on a gesture
+- the hero trailer MOUNTS (youtube-nocookie, muted, aria-hidden), after its five
+  gates are asserted first so a runner that fails a gate reads as the runner,
+  not the site; and at 390px it must NOT mount
+- hovering a card applies .peek and its backdrop from img.flixshows.me loads
+- the watch-page pill is hidden AND computes to display:none; a class once beat
+  the [hidden] rule and shipped it visible while the attribute was correct
+- every [hidden] element on every page computes to display:none
+- the episode panel (fixture breaking-bad-2008, a title KNOWN to carry episode
+  names; a title with no TMDB match legitimately shows "Episode 4") opens with
+  named rows, runtimes, and exactly one WATCHING mark
+
+Deliberately NOT asserted, because each is a third party's answer: that the
+trailer PLAYS (.hero-bg.playing) or that its mute button is VISIBLE. Both are set
+by the YouTube iframe's own load handler, which never fired in headless on
+2026-09-24; asserting either would redden every run for a reason not ours.
 
 Measured on the live site 2026-09-24: 17 rails, 0 unwired, arrow landed at 1316
 = 7 x 188, 14 scrollable rails all with dots and a disabled left arrow, 13
@@ -44,6 +59,43 @@ from pathlib import Path
 
 SITE = "https://flixshows.me"
 WATCH = f"{SITE}/watch/iron-man-2008"
+SERIES = f"{SITE}/watch/breaking-bad-2008"   # fixture: carries episode names (7 of 7)
+PHONE = {"width": 390, "height": 844}
+
+HERO_JS = """() => { const v = document.querySelector('.hero-video'), c = navigator.connection || {};
+  return {gates: {wide: innerWidth >= 760, hover: matchMedia('(hover:hover)').matches,
+                  motion_ok: !matchMedia('(prefers-reduced-motion: reduce)').matches,
+                  save_data_off: !c.saveData, net_4g: c.effectiveType === '4g'},
+          mounted: !!v, host: v ? new URL(v.src).host : null,
+          muted: v ? /[?&]mute=1/.test(v.src) : null,
+          aria_hidden: v ? v.getAttribute('aria-hidden') : null}; }"""
+
+HIDDEN_JS = """() => [...document.querySelectorAll('[hidden]')]
+  .filter(e => getComputedStyle(e).display !== 'none')
+  .map(e => e.id ? '#' + e.id : (e.className ? '.' + String(e.className).split(' ')[0] : e.tagName))"""
+
+WATCHPAGE_JS = """() => { const c = document.getElementById('chip');
+  return {chip: !!c, chip_hidden: c ? c.hidden : null,
+          chip_display: c ? getComputedStyle(c).display : null,
+          frame_iframes: document.querySelectorAll('#frame iframe').length,
+          iframes: document.querySelectorAll('iframe').length}; }"""
+
+EP_BEFORE_JS = """() => ({epanel_hidden: (document.getElementById('epanel') || {}).hidden,
+  epopen_expanded: document.getElementById('epopen') ? document.getElementById('epopen').getAttribute('aria-expanded') : null,
+  epq: !!document.getElementById('epq'),
+  srcs_open: document.getElementById('srcs') ? document.getElementById('srcs').open : null})"""
+
+EP_AFTER_JS = """() => { const rows = [...document.querySelectorAll('#epanel .ep')];
+  const name = r => ((r.querySelector('.ept') || {}).textContent || '').trim();
+  return {epanel_hidden: document.getElementById('epanel').hidden, rows: rows.length,
+          generic_names: rows.filter(r => /^Episode \\d+$/.test(name(r))).length,
+          no_name: rows.filter(r => !r.querySelector('.ept')).length,
+          no_runtime: rows.filter(r => !r.querySelector('.epr')).length,
+          watching: document.querySelectorAll('.ep[aria-pressed=true] .now').length}; }"""
+
+PEEK_JS = """() => { const c = document.querySelector('.card.peek'); if (!c) return null;
+  const im = c.querySelector('.art img.bd');
+  return im ? {complete: im.complete, width: im.naturalWidth} : {img: 'missing'}; }"""
 QUERY = "breaking"
 VIEWPORT = {"width": 1366, "height": 900}
 
@@ -124,42 +176,136 @@ def judge(m: dict) -> list[str]:
                      + ("only the hot tier" if tier == "search-index.json" else "nothing fast"))
     if not m.get("search_results"):
         P.append(f"search for {QUERY!r} returned 0 results on the served site")
-    for page in ("home", "watch"):
+    for page in ("home", "watch", "series"):
         errs = m.get(f"{page}_errors") or []
         if errs:
             P.append(f"{page} page threw {len(errs)} uncaught error(s), first: {errs[0]}")
     if m.get("watch_iframes"):
         P.append(f"the watch page has {m['watch_iframes']} iframe(s) before any click; players "
                  "must mount only on a gesture")
+
+    # Hero trailer: gates first, so a runner that fails one is not read as the site.
+    h = m.get("hero") or {}
+    off = [g for g, ok in (h.get("gates") or {}).items() if not ok]
+    if off:
+        P.append(f"hero trailer not checked: the runner fails its gate(s) {off}, so the "
+                 "trailer correctly refused. Fix the runner's browser profile, not the site")
+    elif not h.get("mounted"):
+        P.append("hero trailer never mounted although all five of its gates pass")
+    else:
+        if h.get("host") != "www.youtube-nocookie.com":
+            P.append(f"hero trailer mounted from {h.get('host')}, not www.youtube-nocookie.com")
+        if not h.get("muted"):
+            P.append("hero trailer mounted without mute=1, so it would autoplay with sound")
+        if h.get("aria_hidden") != "true":
+            P.append("hero trailer is not aria-hidden, so screen readers announce a decorative video")
+    if m.get("phone_hero_mounted"):
+        P.append("hero trailer mounted on a 390px phone, where its gate must refuse it")
+
+    # Hover preview: a network dependency of ours, polled rather than slept.
+    if m.get("peek_before"):
+        P.append(f"{m['peek_before']} cards carry .peek before anything was hovered")
+    pk = m.get("peek")
+    if pk is None:
+        P.append("hovering a card with a backdrop did not apply .peek within 3s")
+    elif pk.get("img") == "missing":
+        P.append("the hovered card has .peek but no backdrop image element")
+    elif not (pk.get("complete") and pk.get("width")):
+        P.append("the hovered card's backdrop did not load from img.flixshows.me within 3s")
+
+    # Watch-page pill and every [hidden] element.
+    for label in ("watch", "series"):
+        w = m.get(f"{label}_page") or {}
+        if not w.get("chip"):
+            P.append(f"{label} page has no #chip status pill")
+        elif not w.get("chip_hidden") or w.get("chip_display") != "none":
+            P.append(f"{label} page status pill is VISIBLE before play (hidden={w.get('chip_hidden')}, "
+                     f"display={w.get('chip_display')}); a class once beat the [hidden] rule exactly so")
+        if w.get("frame_iframes"):
+            P.append(f"{label} page has {w['frame_iframes']} iframe(s) in #frame before a click")
+    for page in ("home", "watch", "series"):
+        leaked = m.get(f"{page}_hidden_visible") or []
+        if leaked:
+            P.append(f"{page} page: {len(leaked)} [hidden] element(s) still render, e.g. {leaked[:4]}; "
+                     "a display rule is beating the hidden attribute")
+
+    # Episode panel on the fixture series.
+    eb, ea = m.get("ep_before") or {}, m.get("ep_after") or {}
+    if eb.get("epanel_hidden") is not True or eb.get("epopen_expanded") != "false":
+        P.append(f"episode panel is not shut on load (hidden={eb.get('epanel_hidden')}, "
+                 f"aria-expanded={eb.get('epopen_expanded')})")
+    if not eb.get("epq"):
+        P.append("episode panel has no #epq search box")
+    if eb.get("srcs_open"):
+        P.append("the sources list starts open; it must start collapsed")
+    if ea:
+        if ea.get("epanel_hidden") is not False:
+            P.append("clicking #epopen did not open the episode panel")
+        elif not ea.get("rows"):
+            P.append("the episode panel opened with 0 episode rows")
+        else:
+            if ea.get("generic_names") or ea.get("no_name"):
+                P.append(f"{ea.get('generic_names', 0) + ea.get('no_name', 0)} of {ea['rows']} episodes "
+                         "on breaking-bad-2008 have no real name (shown as 'Episode N'), on a title "
+                         "known to carry names")
+            if ea.get("no_runtime"):
+                P.append(f"{ea['no_runtime']} of {ea['rows']} episode rows have no runtime")
+            if ea.get("watching") != 1:
+                P.append(f"the episode panel shows {ea.get('watching')} WATCHING marks, not exactly 1")
     return P
 
 
 def measure() -> dict:
     from playwright.sync_api import sync_playwright
     m: dict = {}
+
+    def poll(page, js, until, tries, gap_ms):
+        v = None
+        for _ in range(tries):
+            v = page.evaluate(js)
+            if until(v):
+                break
+            page.wait_for_timeout(gap_ms)
+        return v
+
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport=VIEWPORT)
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)[:160]))
 
+        # ---- home
         page.goto(SITE + "/", wait_until="load", timeout=60000)
-        page.wait_for_timeout(2000)            # let the rail and search scripts initialise
         m["home_title"] = page.title()
+        m["hero"] = poll(page, HERO_JS, lambda v: v["mounted"], 40, 200)   # up to 8s
+        page.wait_for_timeout(1500)            # let the rail and search scripts initialise
         m["rails"] = page.evaluate(RAILS_JS)
         m["step"] = page.evaluate(STEP_JS)
-        # Search loads two index tiers lazily on the first keystroke: the small hot
-        # tier answered at 0.4s with 1 result, the full index at ~2.1s with 13
-        # (measured 2026-09-24). Counting as soon as ANY result shows measured the
-        # hot tier alone, so a full index that failed to load passed. Record each
-        # tier's real response, wait for the full one, then count once it settles.
+        m["peek_before"] = page.evaluate("document.querySelectorAll('.card.peek').length")
+        card = page.locator(".card[data-bd]").first
+        if card.count():
+            card.scroll_into_view_if_needed()
+            card.hover()
+            # 600ms dwell timer, then the backdrop download: landed at 0.7-1.3s.
+            m["peek"] = poll(page, PEEK_JS, lambda v: bool(v and (v.get("width") or v.get("img"))),
+                             30, 100)
+        else:
+            m["peek"] = None
+        m["home_hidden_visible"] = page.evaluate(HIDDEN_JS)
+
+        # Search last: typing opens a results panel over the page. It loads two
+        # tiers lazily on the first keystroke: the small hot tier answered at
+        # 0.4s with 1 result, the full index at ~2.1s with 13 (2026-09-24).
+        # Counting at first sight measured the hot tier alone, so a dead full
+        # index passed. Record each tier's real response, wait for the full one,
+        # then count once the number holds.
         tiers: dict = {}
-        watch = ("search-hot.json", "search-index.json")
+        want = ("search-hot.json", "search-index.json")
         name = lambda u: u.split("?")[0].rsplit("/", 1)[-1]
         page.on("response", lambda r: tiers.setdefault(name(r.url), r.status)
-                if name(r.url) in watch else None)
+                if name(r.url) in want else None)
         page.on("requestfailed", lambda r: tiers.setdefault(name(r.url), f"failed: {r.failure}")
-                if name(r.url) in watch else None)
+                if name(r.url) in want else None)
         page.fill("#q", QUERY)
         for _ in range(75):                        # up to 15s for the full tier to answer
             if "search-index.json" in tiers:
@@ -177,12 +323,34 @@ def measure() -> dict:
         m["search_tiers"] = dict(tiers)
         m["home_errors"] = list(errors)
 
+        # ---- a movie watch page
         errors.clear()
         page.goto(WATCH, wait_until="load", timeout=60000)
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(1500)
         m["watch_title"] = page.title()
-        m["watch_iframes"] = page.evaluate("document.querySelectorAll('iframe').length")
+        m["watch_page"] = page.evaluate(WATCHPAGE_JS)
+        m["watch_iframes"] = m["watch_page"]["iframes"]
+        m["watch_hidden_visible"] = page.evaluate(HIDDEN_JS)
         m["watch_errors"] = list(errors)
+
+        # ---- the fixture series, and its episode panel
+        errors.clear()
+        page.goto(SERIES, wait_until="load", timeout=60000)
+        page.wait_for_timeout(1500)
+        m["series_page"] = page.evaluate(WATCHPAGE_JS)
+        m["series_hidden_visible"] = page.evaluate(HIDDEN_JS)
+        m["ep_before"] = page.evaluate(EP_BEFORE_JS)
+        if page.locator("#epopen").count():
+            page.click("#epopen")
+            m["ep_after"] = poll(page, EP_AFTER_JS, lambda v: v["epanel_hidden"] is False and v["rows"],
+                                 20, 150)
+        m["series_errors"] = list(errors)
+
+        # ---- the trailer's refusal: a phone must never mount it
+        phone = browser.new_page(viewport=PHONE)
+        phone.goto(SITE + "/", wait_until="load", timeout=60000)
+        phone.wait_for_timeout(4000)
+        m["phone_hero_mounted"] = phone.evaluate("!!document.querySelector('.hero-video')")
         browser.close()
     return m
 
@@ -200,8 +368,14 @@ def main() -> int:
                 "scrollable_rails": (m.get("rails") or {}).get("scrollable"),
                 "arrow_step": m.get("step"), "search_results": m.get("search_results"),
                 "search_tiers": m.get("search_tiers"),
-                "page_errors": len(m.get("home_errors", [])) + len(m.get("watch_errors", [])),
-                "watch_iframes_before_click": m.get("watch_iframes")}
+                "page_errors": sum(len(m.get(f"{x}_errors", [])) for x in ("home", "watch", "series")),
+                "watch_iframes_before_click": m.get("watch_iframes"),
+                "hero": {k: (m.get("hero") or {}).get(k) for k in ("mounted", "host", "muted")},
+                "hero_on_phone": m.get("phone_hero_mounted"),
+                "peek": m.get("peek"),
+                "hidden_but_rendered": sum(len(m.get(f"{x}_hidden_visible") or [])
+                                           for x in ("home", "watch", "series")),
+                "episode_panel": m.get("ep_after")}
         out.update(ok=not P, problems=P, measured=flat)
     except Exception as e:                                        # noqa: BLE001
         # A timeout waiting for search results lands here, and says so.
