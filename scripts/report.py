@@ -163,6 +163,10 @@ def main() -> int:
                     "judge from step outcomes alone")
     ap.add_argument("--suite", required=True, help='e.g. "Site check"; goes in the subject')
     ap.add_argument("--dry-run", action="store_true", help="print, never send")
+    ap.add_argument("--private-detail", action="store_true",
+                    help="log counts only; the problems themselves go to the mail alone. "
+                         "For checks whose findings name a source or its URLs, since this "
+                         "repo's logs are public")
     a = ap.parse_args()
 
     run_url = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/"
@@ -193,9 +197,13 @@ def main() -> int:
         return 0
 
     subject = subject_for(suite, problems)
-    print(f"[report] subject: {subject}")
-    for p in problems:
-        print(f"  - {p}")
+    if a.private_detail:
+        # The subject carries the first problem too, so it stays out of the log.
+        print(f"[report] {suite}: {len(problems)} problem(s), detail in the mail only")
+    else:
+        print(f"[report] subject: {subject}")
+        for p in problems:
+            print(f"  - {p}")
     if a.dry_run:
         print("[report] dry run, not sent")
         return 1
