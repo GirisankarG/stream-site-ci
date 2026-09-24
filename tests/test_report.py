@@ -106,3 +106,22 @@ def test_private_detail_keeps_findings_out_of_the_public_log(tmp_path, monkeypat
     out = capsys.readouterr().out
     assert "source-host.example" not in out
     assert "Discovery: 1 problem(s), detail in the mail only" in out
+
+
+def test_notification_mails_and_stays_green(tmp_path, monkeypatch, capsys):
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"suite": "Discovery", "ok": True, "problems": [], "measured": {},
+                             "notify": ["since the last run: 3 new titles", "  X"]}))
+    monkeypatch.setattr(sys, "argv", ["report.py", "--summary", str(p), "--suite", "Discovery",
+                                      "--dry-run"])
+    assert R.main() == 0
+    assert "[FlixShows] Discovery: since the last run: 3 new titles (+1 more)" in capsys.readouterr().out
+
+
+def test_notification_nobody_can_receive_is_red(tmp_path, monkeypatch):
+    for k in ("RESEND_API_KEY", "ALERT_EMAIL", "ALERT_FROM"):
+        monkeypatch.delenv(k, raising=False)
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"suite": "Discovery", "ok": True, "problems": [], "notify": ["x"]}))
+    monkeypatch.setattr(sys, "argv", ["report.py", "--summary", str(p), "--suite", "Discovery"])
+    assert R.main() == 1
