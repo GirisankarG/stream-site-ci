@@ -12,6 +12,13 @@ LIVE = {"home_title": "FlixShows - Find it. Press play.", "watch_title": "Iron M
         "search_tiers": {"search-hot.json": 200, "search-index.json": 200},
         "home_errors": [], "watch_errors": [], "series_errors": [], "watch_iframes": 0,
         "sa_event": "function",
+        "trailer_button": 1, "trailer_iframes": 1,
+        "trailer_referrerpolicy": "strict-origin-when-cross-origin", "trailer_frame_text": None,
+        "trailer_errors": [],
+        "phone_watch": {"stage_bottom": 438, "vh": 844},
+        "phone_sheet": {"position": "fixed", "left": 0, "width": 390, "vw": 390, "bottom": 844,
+                        "vh": 844, "rows": 7, "in_view": 7, "min_row_h": 48},
+        "phone_captions": {"caps": 164, "bad": 0},
         "hero": {"gates": {"wide": True, "hover": True, "motion_ok": True, "save_data_off": True,
                            "net_4g": True},
                  "mounted": True, "host": "www.youtube-nocookie.com", "muted": True, "aria_hidden": "true"},
@@ -194,3 +201,55 @@ def test_trailer_showing_youtubes_embed_error_fires():
 def test_trailer_frame_not_yet_rendered_is_not_a_failure():
     """An empty frame is YouTube being slow, not a misconfiguration."""
     assert B.judge(m(hero_frame_text=None)) == []
+
+
+# ----------------------------------------------------- watch-page trailer
+
+def test_trailer_iframe_without_a_referrer_policy_fires():
+    """The live state on 2026-09-27: attribute absent, page policy no-referrer."""
+    probs = B.judge(m(trailer_referrerpolicy=None))
+    assert any("referrerpolicy is None" in p for p in probs)
+
+
+def test_any_policy_that_sends_a_referrer_passes():
+    """The requirement is 'YouTube gets a referrer', not one exact string."""
+    assert B.judge(m(trailer_referrerpolicy="origin")) == []
+
+
+def test_watch_trailer_showing_the_embed_error_fires():
+    probs = B.judge(m(trailer_frame_text="Video player configuration error"))
+    assert any("watch-page Trailer shows" in p for p in probs)
+
+
+def test_trailer_click_that_mounts_nothing_fires():
+    assert any("mounted no iframe" in p for p in B.judge(m(trailer_iframes=0)))
+
+
+# ----------------------------------------------------------------- phone
+
+def test_player_below_the_fold_fires():
+    assert any("below the" in p for p in B.judge(m(phone_watch={"stage_bottom": 900, "vh": 844})))
+
+
+def test_panel_that_is_not_a_bottom_sheet_fires():
+    sheet = {**LIVE["phone_sheet"], "position": "absolute", "bottom": 700}
+    assert any("not a bottom sheet" in p for p in B.judge(m(phone_sheet=sheet)))
+
+
+def test_unreachable_episode_rows_fire():
+    sheet = {**LIVE["phone_sheet"], "in_view": 4}
+    assert any("4 of 7" in p for p in B.judge(m(phone_sheet=sheet)))
+
+
+def test_small_tap_targets_fire():
+    sheet = {**LIVE["phone_sheet"], "min_row_h": 30}
+    assert any("44px tap target" in p for p in B.judge(m(phone_sheet=sheet)))
+
+
+def test_clipped_card_titles_fire():
+    """The real bug: inline span captions clipped under overflow:hidden."""
+    assert any("card titles do not render" in p for p in B.judge(m(phone_captions={"caps": 164, "bad": 164})))
+
+
+def test_zero_card_titles_is_measured_nothing():
+    assert any("0 card titles" in p for p in B.judge(m(phone_captions={"caps": 0, "bad": 0})))
