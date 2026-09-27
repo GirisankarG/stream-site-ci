@@ -220,3 +220,27 @@ def test_left_out_page_that_is_indexable_fires(monkeypatch):
     probs, m = _fake_site(monkeypatch, left_out_robots="index,follow")
     assert m["left_out_indexable"] == 1
     assert any("LEFT OUT of the sitemap are indexable" in p for p in probs)
+
+
+# ------------------------------------------------------- homepage integrity
+
+HOME = ('<section class="hero"><a href="watch/interstellar-2014">Watch</a></section>'
+        '<a class="card" href="watch/a">A</a><a class="card" href="watch/b">B</a>')
+
+
+def test_distinct_cards_and_a_hero_not_repeated_are_clean():
+    assert L.home_card_links(HOME) == ["watch/a", "watch/b"]
+    assert L.hero_links(HOME) == {"watch/interstellar-2014"}
+
+
+def test_duplicate_cards_are_counted():
+    """The live state on 2026-09-27: 165 cards for 109 titles."""
+    body = HOME + '<a href="watch/a" class="card big">A again</a>'
+    links = L.home_card_links(body)
+    assert len(links) == 3 and len(set(links)) == 2
+
+
+def test_rotating_hero_links_are_all_collected():
+    body = ('<section class="hero"><a href="watch/x">x</a></section>'
+            '<section class="hero" inert><a href="watch/y">y</a></section>')
+    assert L.hero_links(body) == {"watch/x", "watch/y"}

@@ -41,6 +41,21 @@ Found live 2026-09-27 by MS_UI: every visitor saw "Video player configuration
 error" (Error 153) because the site sends Referrer-Policy: no-referrer, which
 YouTube now refuses. The mount check passed it, since the frame loaded fine.
 
+The watch-page Trailer button (fixture interstellar-2014, which has a trailer)
+shares that cause, so its iframe must carry a referrerpolicy that SENDS a
+cross-origin referrer, and its frame text must not be the embed error. The
+requirement is "YouTube receives a referrer", not one exact value, so any
+policy in REFERRER_OK passes.
+
+On a phone (390x844, mobile, touch), on breaking-bad-2008: the player is above
+the fold; the episode panel opens as a bottom sheet (fixed, full width, flush to
+the bottom) with every row in view and every row a 44px tap target, which holds
+for this fixture's 7-episode season; a 16-episode season scrolls inside the
+sheet by design. On the phone homepage, every card title renders: display
+block, at least 14px tall, inside its card, not empty. Geometry, not the class,
+because the bug it catches was captions clipped by an inline span under
+overflow:hidden while the class stayed right.
+
 Deliberately NOT asserted, because each is a third party's answer: that the
 trailer PLAYS (.hero-bg.playing) or that its mute button is VISIBLE. Both are set
 by the YouTube iframe's own load handler, which never fired in headless on
@@ -70,7 +85,29 @@ from pathlib import Path
 SITE = "https://flixshows.me"
 WATCH = f"{SITE}/watch/iron-man-2008"
 SERIES = f"{SITE}/watch/breaking-bad-2008"   # fixture: carries episode names (7 of 7)
+TRAILER_PAGE = f"{SITE}/watch/interstellar-2014"   # fixture: has a trailer button
 PHONE = {"width": 390, "height": 844}
+# Policies under which a cross-origin iframe request carries a Referer. Absent or
+# no-referrer / same-origin inherit or suppress it, which is what YouTube refuses.
+REFERRER_OK = {"origin", "strict-origin", "origin-when-cross-origin",
+               "strict-origin-when-cross-origin", "no-referrer-when-downgrade", "unsafe-url"}
+
+PHONE_WATCH_JS = """() => { const r = document.getElementById('stage');
+  return r ? {stage_bottom: Math.round(r.getBoundingClientRect().bottom), vh: innerHeight}
+           : {stage_bottom: null, vh: innerHeight}; }"""
+
+PHONE_SHEET_JS = """() => { const e = document.getElementById('epanel'); if (!e) return null;
+  const r = e.getBoundingClientRect(), rows = [...e.querySelectorAll('.ep')].map(x => x.getBoundingClientRect());
+  return {position: getComputedStyle(e).position, left: Math.round(r.left), width: Math.round(r.width),
+          vw: innerWidth, bottom: Math.round(r.bottom), vh: innerHeight, rows: rows.length,
+          in_view: rows.filter(q => q.top >= 0 && q.bottom <= innerHeight).length,
+          min_row_h: rows.length ? Math.round(Math.min(...rows.map(q => q.height))) : null}; }"""
+
+PHONE_CAPS_JS = """() => { const caps = [...document.querySelectorAll('.rail .card .cap')];
+  const bad = caps.filter(c => { const cs = getComputedStyle(c), r = c.getBoundingClientRect(),
+                                        k = c.closest('.card').getBoundingClientRect();
+    return cs.display !== 'block' || r.height < 14 || r.bottom > k.bottom + 1 || !c.textContent.trim(); });
+  return {caps: caps.length, bad: bad.length}; }"""
 
 HERO_JS = """() => { const v = document.querySelector('.hero-video'), c = navigator.connection || {};
   return {gates: {wide: innerWidth >= 760, hover: matchMedia('(hover:hover)').matches,
@@ -215,13 +252,63 @@ def judge(m: dict) -> list[str]:
         if h.get("aria_hidden") != "true":
             P.append("hero trailer is not aria-hidden, so screen readers announce a decorative video")
     ft = m.get("hero_frame_text") or ""
-    if h.get("mounted") and ("configuration error" in ft.lower()
-                             or __import__("re").search(r"\bError \d{3}\b", ft)):
+    if h.get("mounted") and embed_error(ft):
         P.append(f"the hero trailer shows YouTube's error to every visitor ({ft[:80]!r}): the "
                  f"embed is misconfigured. Referrer-Policy is {m.get('referrer_policy')!r}; "
                  "YouTube refuses embeds that arrive with no referrer")
     if m.get("phone_hero_mounted"):
         P.append("hero trailer mounted on a 390px phone, where its gate must refuse it")
+
+    # Watch-page Trailer button.
+    if "trailer_button" in m:
+        if not m.get("trailer_button"):
+            P.append("interstellar-2014 has no #trailer button, though it is the fixture that has a trailer")
+        elif not m.get("trailer_iframes"):
+            P.append("clicking #trailer mounted no iframe in #frame")
+        else:
+            pol = m.get("trailer_referrerpolicy")
+            if pol not in REFERRER_OK:
+                P.append(f"the Trailer iframe's referrerpolicy is {pol!r}, so YouTube receives no "
+                         "referrer and refuses the embed. It needs one that sends a cross-origin "
+                         "referrer, such as strict-origin-when-cross-origin")
+            if embed_error(m.get("trailer_frame_text")):
+                P.append(f"the watch-page Trailer shows YouTube's error "
+                         f"({(m.get('trailer_frame_text') or '')[:60]!r})")
+    if m.get("trailer_errors"):
+        P.append(f"trailer page threw {len(m['trailer_errors'])} uncaught error(s), "
+                 f"first: {m['trailer_errors'][0]}")
+
+    # Phone.
+    pw = m.get("phone_watch")
+    if pw is not None:
+        if pw.get("stage_bottom") is None:
+            P.append("phone watch page has no #stage player")
+        elif pw["stage_bottom"] > pw["vh"]:
+            P.append(f"on a phone the player ends at {pw['stage_bottom']}px, below the "
+                     f"{pw['vh']}px fold: a reader has to scroll to find it")
+    sh = m.get("phone_sheet")
+    if "phone_watch" in m:
+        if not sh:
+            P.append("on a phone, #epopen opened no episode panel with rows")
+        else:
+            if (sh["position"] != "fixed" or sh["left"] != 0 or sh["width"] != sh["vw"]
+                    or sh["bottom"] != sh["vh"]):
+                P.append(f"on a phone the episode panel is not a bottom sheet (position "
+                         f"{sh['position']}, left {sh['left']}, width {sh['width']}/{sh['vw']}, "
+                         f"bottom {sh['bottom']}/{sh['vh']})")
+            if sh["in_view"] != sh["rows"]:
+                P.append(f"on a phone only {sh['in_view']} of {sh['rows']} episode rows are "
+                         "reachable in the sheet on breaking-bad-2008, whose season fits")
+            if sh.get("min_row_h") is not None and sh["min_row_h"] < 44:
+                P.append(f"on a phone the shortest episode row is {sh['min_row_h']}px, under "
+                         "the 44px tap target")
+    pc = m.get("phone_captions")
+    if pc is not None:
+        if not pc.get("caps"):
+            P.append("the phone homepage has 0 card titles, so none were checked")
+        elif pc.get("bad"):
+            P.append(f"on a phone {pc['bad']} of {pc['caps']} card titles do not render (clipped, "
+                     "empty, or outside their card)")
 
     # Hover preview: a network dependency of ours, polled rather than slept.
     if m.get("peek_before"):
@@ -276,6 +363,27 @@ def judge(m: dict) -> list[str]:
     return P
 
 
+def youtube_text(page, tries: int = 40) -> str | None:
+    """innerText of the page's YouTube frame, read by the driver across origins."""
+    for _ in range(tries):
+        yt = [f for f in page.frames if "youtube" in (f.url or "")]
+        if yt:
+            try:
+                txt = yt[0].evaluate("document.body ? document.body.innerText : ''")
+            except Exception as e:                               # noqa: BLE001
+                txt = f"<could not read the frame: {type(e).__name__}>"
+            if txt and txt.strip():
+                return txt.strip()[:200]
+        page.wait_for_timeout(250)
+    return None
+
+
+def embed_error(text: str | None) -> bool:
+    import re as _re
+    t = text or ""
+    return "configuration error" in t.lower() or bool(_re.search(r"\bError \d{3}\b", t))
+
+
 def measure() -> dict:
     from playwright.sync_api import sync_playwright
     m: dict = {}
@@ -296,23 +404,26 @@ def measure() -> dict:
         page.on("pageerror", lambda e: errors.append(str(e)[:160]))
 
         # ---- home
-        home_resp = page.goto(SITE + "/", wait_until="load", timeout=60000)
+        # domcontentloaded, never "load": load waits on the analytics vendor's CDN,
+        # which held it open past 30s on a congested link and timed a context out.
+        # sa_event is polled below instead, which measures analytics directly.
+        home_resp = page.goto(SITE + "/", wait_until="domcontentloaded", timeout=60000)
+        # Pause the hero the way a keyboard user does, BEFORE any wait. Once it
+        # rotates (every 7s), leaving a slide removes its trailer and the next one
+        # mounts ~0.9s later, so an unpaused read can find no trailer and report a
+        # working one as broken. The rotation clock starts at DOMContentLoaded, so
+        # focusing after a wait is too late. A no-op on today's single hero.
+        page.evaluate("(() => { const b = document.querySelector('.hero:not([inert]) .btn-primary');"
+                      " if (b) b.focus({preventScroll: true}); })()")
         m["home_title"] = page.title()
-        m["sa_event"] = poll(page, "typeof window.sa_event", lambda v: v == "function", 25, 200)
-        m["hero"] = poll(page, HERO_JS, lambda v: v["mounted"], 40, 200)   # up to 8s
+        m["sa_event"] = poll(page, "typeof window.sa_event", lambda v: v == "function", 50, 200)
+        # Up to 45s. Today the trailer mounts only after window load, which took
+        # 12.9s and 21.1s on two measured runs (analytics plus dozens of posters),
+        # so an 8s window started at DOMContentLoaded read a working trailer as
+        # never mounted. The next build gates it on the first backdrop instead.
+        m["hero"] = poll(page, HERO_JS, lambda v: v["mounted"], 225, 200)
         m["referrer_policy"] = home_resp.headers.get("referrer-policy") if home_resp else None
-        m["hero_frame_text"] = None
-        for _ in range(40):                    # up to 10s for YouTube to render its body
-            yt = [f for f in page.frames if "youtube" in (f.url or "")]
-            if yt:
-                try:
-                    txt = yt[0].evaluate("document.body ? document.body.innerText : ''")
-                except Exception as e:                           # noqa: BLE001
-                    txt = f"<could not read the frame: {type(e).__name__}>"
-                if txt and txt.strip():
-                    m["hero_frame_text"] = txt.strip()[:200]
-                    break
-            page.wait_for_timeout(250)
+        m["hero_frame_text"] = youtube_text(page)
         page.wait_for_timeout(1500)            # let the rail and search scripts initialise
         m["rails"] = page.evaluate(RAILS_JS)
         m["step"] = page.evaluate(STEP_JS)
@@ -360,7 +471,7 @@ def measure() -> dict:
 
         # ---- a movie watch page
         errors.clear()
-        page.goto(WATCH, wait_until="load", timeout=60000)
+        page.goto(WATCH, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(1500)
         m["watch_title"] = page.title()
         m["watch_page"] = page.evaluate(WATCHPAGE_JS)
@@ -370,7 +481,7 @@ def measure() -> dict:
 
         # ---- the fixture series, and its episode panel
         errors.clear()
-        page.goto(SERIES, wait_until="load", timeout=60000)
+        page.goto(SERIES, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(1500)
         m["series_page"] = page.evaluate(WATCHPAGE_JS)
         m["series_hidden_visible"] = page.evaluate(HIDDEN_JS)
@@ -381,11 +492,38 @@ def measure() -> dict:
                                  20, 150)
         m["series_errors"] = list(errors)
 
-        # ---- the trailer's refusal: a phone must never mount it
-        phone = browser.new_page(viewport=PHONE)
-        phone.goto(SITE + "/", wait_until="load", timeout=60000)
+        # ---- the watch-page Trailer button
+        errors.clear()
+        page.goto(TRAILER_PAGE, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(1500)
+        m["trailer_button"] = page.locator("#trailer").count()
+        if m["trailer_button"]:
+            page.click("#trailer")
+            try:
+                page.wait_for_selector("#frame iframe", timeout=10000)
+                m["trailer_iframes"] = page.evaluate("document.querySelectorAll('#frame iframe').length")
+                m["trailer_referrerpolicy"] = page.evaluate(
+                    "document.querySelector('#frame iframe').getAttribute('referrerpolicy')")
+                m["trailer_frame_text"] = youtube_text(page)
+            except Exception:                                    # noqa: BLE001
+                m["trailer_iframes"] = 0     # judged below: the click mounted nothing
+        m["trailer_errors"] = list(errors)
+
+        # ---- a real phone: mobile, touch, 390x844
+        ctx = browser.new_context(viewport=PHONE, is_mobile=True, has_touch=True,
+                                  device_scale_factor=3)
+        phone = ctx.new_page()
+        phone.goto(SITE + "/", wait_until="domcontentloaded", timeout=60000)
         phone.wait_for_timeout(4000)
         m["phone_hero_mounted"] = phone.evaluate("!!document.querySelector('.hero-video')")
+        m["phone_captions"] = phone.evaluate(PHONE_CAPS_JS)
+        phone.goto(SERIES, wait_until="domcontentloaded", timeout=60000)
+        phone.wait_for_timeout(1500)
+        m["phone_watch"] = phone.evaluate(PHONE_WATCH_JS)
+        if phone.locator("#epopen").count():
+            phone.click("#epopen")
+            m["phone_sheet"] = poll(phone, PHONE_SHEET_JS,
+                                    lambda v: bool(v and v.get("rows")), 20, 150)
         browser.close()
     return m
 
@@ -413,7 +551,12 @@ def main() -> int:
                 "peek": m.get("peek"),
                 "hidden_but_rendered": sum(len(m.get(f"{x}_hidden_visible") or [])
                                            for x in ("home", "watch", "series")),
-                "episode_panel": m.get("ep_after")}
+                "episode_panel": m.get("ep_after"),
+                "trailer_referrerpolicy": m.get("trailer_referrerpolicy"),
+                "trailer_frame_text": m.get("trailer_frame_text"),
+                "phone_player_bottom": (m.get("phone_watch") or {}).get("stage_bottom"),
+                "phone_sheet": m.get("phone_sheet"),
+                "phone_captions": m.get("phone_captions")}
         out.update(ok=not P, problems=P, measured=flat)
     except Exception as e:                                        # noqa: BLE001
         # A timeout waiting for search results lands here, and says so.

@@ -241,6 +241,26 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
         P.append(f"home page: HTTP {home.status}, title {home_title!r}, "
                  f"expected 200 and a title starting {b['home_title_prefix']!r}")
 
+    # 1b) Homepage integrity, from the served HTML. On 2026-09-27 the live homepage
+    # showed 165 cards for 109 titles (Game of Thrones 4 times) and its hero title
+    # again in a row below; the next build fixes both (MS_UI, b937e35). Exactly
+    # one h1, whatever the hero carousel does.
+    if home.status == 200:
+        hrefs = home_card_links(home.body)
+        dupes = sorted({u for u in hrefs if hrefs.count(u) > 1})
+        hero = hero_links(home.body)
+        h1s = len(re.findall(r"<h1\b", home.body, re.I))
+        M.update(home_cards=len(hrefs), home_card_titles=len(set(hrefs)), home_h1=h1s)
+        if not hrefs:
+            P.append("home page has 0 title cards, so the homepage was not checked")
+        if dupes:
+            P.append(f"the homepage shows {len(dupes)} titles more than once ({len(hrefs)} cards "
+                     f"for {len(set(hrefs))} titles), e.g. {dupes[:3]}")
+        if hero & set(hrefs):
+            P.append(f"the hero title also appears in a row below it: {sorted(hero & set(hrefs))[:3]}")
+        if h1s != 1:
+            P.append(f"the homepage has {h1s} h1 elements, not exactly 1")
+
     # 2) robots.txt declares exactly the committed sitemap set.
     rb = fetch(site + "/robots.txt")
     declared = set(_SITEMAP_DECL.findall(rb.body)) if rb.status == 200 else set()
@@ -376,6 +396,21 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
                      "titles and fixes are not reaching readers")
 
     return P, M
+
+
+_CARD = re.compile(r'<a\b[^>]*class="card[^"]*"[^>]*href="([^"]+)"'
+                   r'|<a\b[^>]*href="([^"]+)"[^>]*class="card[^"]*"', re.I)
+_HERO = re.compile(r'<section[^>]*class="hero\b[\s\S]*?</section>', re.I)
+
+
+def home_card_links(body: str) -> list[str]:
+    """Every title card's link on the page, duplicates kept, so a repeat is countable."""
+    return [a or b for a, b in _CARD.findall(body)]
+
+
+def hero_links(body: str) -> set[str]:
+    """Titles the hero links to: one section.hero today, several once it rotates."""
+    return {u for sec in _HERO.findall(body) for u in re.findall(r'href="(watch/[^"]+)"', sec)}
 
 
 def deploy_age_days(deploy_id: str, now: float) -> float | None:
