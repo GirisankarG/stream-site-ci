@@ -11,6 +11,7 @@ LIVE = {"home_title": "FlixShows - Find it. Press play.", "watch_title": "Iron M
         "step": {"pitch": 188, "scrollLeft": 1316}, "search_results": 13,
         "search_tiers": {"search-hot.json": 200, "search-index.json": 200},
         "home_errors": [], "watch_errors": [], "series_errors": [], "watch_iframes": 0,
+        "sa_event": "function",
         "hero": {"gates": {"wide": True, "hover": True, "motion_ok": True, "save_data_off": True,
                            "net_4g": True},
                  "mounted": True, "host": "www.youtube-nocookie.com", "muted": True, "aria_hidden": "true"},
@@ -176,3 +177,20 @@ def test_watching_mark_must_be_exactly_one():
 
 def test_series_page_error_fires():
     assert any("series page threw" in p for p in B.judge(m(series_errors=["ReferenceError: x"])))
+
+
+def test_analytics_that_loaded_but_is_not_running_fires():
+    """MS_Seo: a 200 from the analytics host is not analytics running."""
+    assert any("analytics is not running" in p for p in B.judge(m(sa_event="undefined")))
+
+
+def test_trailer_showing_youtubes_embed_error_fires():
+    """Live 2026-09-27: every visitor saw this; the mount check passed it."""
+    probs = B.judge(m(hero_frame_text="Video player configuration error\nError 153",
+                      referrer_policy="no-referrer"))
+    assert any("shows YouTube's error" in p and "no-referrer" in p for p in probs)
+
+
+def test_trailer_frame_not_yet_rendered_is_not_a_failure():
+    """An empty frame is YouTube being slow, not a misconfiguration."""
+    assert B.judge(m(hero_frame_text=None)) == []

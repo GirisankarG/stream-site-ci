@@ -20,6 +20,8 @@ file or a log here, and the scripts print no addresses and no source names.
 | `live-check.yml` | hourly | **no** | the served site: home, robots, sitemap band, stratified sample of advertised pages, real 404s, image project cache |
 | `checks.yml` | daily | yes (`CODE_REPO_PAT`) | build, `verify.py`, `phone_audit.py`, `behaviour_test.py` |
 | `live-behaviour.yml` | daily | **no** | the served site in a real browser: rails wired and stepping whole cards, both search tiers loading, no page errors, no player iframe before a click |
+| `relay.yml` | hourly | yes (`PROXY_SECRET`) | the stream relay serves a signed manifest and a real media segment, judged on bytes; 52,892 locked streams depend on it |
+| `stream-liveness.yml` | daily | yes | published stream hosts sampled and judged on bytes; mails a host newly dead or playing again |
 | `watchdog.yml` | every 6h | no | each check's latest run reached its own code, and keeps the schedules enabled |
 | `discovery.yml` | **manual for now** | yes (`CODE_REPO_PAT`, `TMDB_API_KEY`) | what landed at the source or on TMDB that we do not carry; mails only what moved since the last run |
 
@@ -86,5 +88,6 @@ variables > Actions:
 | `ALERT_EMAIL` | where alerts go |
 | `ALERT_FROM` | a sender on a domain verified in Resend, e.g. `FlixShows CI <sync@specterscans.com>` |
 | `TMDB_API_KEY` | for `discovery.yml` only |
+| `PROXY_SECRET` | for `relay.yml` only: the relay's signing secret, from `stream-site/.env` |
 
 Until they exist every run is red and says which ones are missing.

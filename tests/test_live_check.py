@@ -159,3 +159,64 @@ def test_sample_covers_every_path_type_and_a_non_ascii_loc():
 
 def test_empty_sitemap_samples_nothing():
     assert L.stratified_sample([], 12, random.Random(1)) == []
+
+
+# ---------------------------------------------------------- deploy staleness
+
+NOW = 1790500000.0   # 2026-09-27 roughly
+
+
+def test_deploy_age_parses_the_real_id_format():
+    """The live value on 2026-09-27."""
+    age = L.deploy_age_days("20260924T132732Z-539513605", NOW)
+    assert age is not None and 2 < age < 4
+
+
+def test_unparseable_deploy_id_is_none_not_zero_days():
+    """A format change must never read as 'deployed just now'."""
+    assert L.deploy_age_days("abc123", NOW) is None
+    assert L.deploy_age_days("", NOW) is None
+
+
+# --------------------------------------------- served half of the identity
+
+def _fake_site(monkeypatch, left_out_robots="noindex,follow"):
+    """A tiny served site: 3 watch pages, 2 in the sitemap, 1 left out."""
+    home = ('<html><head><title>FlixShows - Find it.</title></head>'
+            '<body><img src="https://img.flixshows.me/static/img/b1.jpg"></body></html>')
+    page = lambda slug, robots: (
+        f'<html><head><title>{slug} - FlixShows</title><meta name="robots" content="{robots}">'
+        f'<link rel="canonical" href="https://flixshows.me/watch/{slug}"></head></html>')
+    routes = {
+        "https://flixshows.me/": L.Resp(200, "https://flixshows.me/", {}, home),
+        "https://flixshows.me/robots.txt": L.Resp(200, "u", {}, "Sitemap: https://flixshows.me/sitemap.xml\n"),
+        "https://flixshows.me/sitemap.xml": L.Resp(200, "u", {},
+            "<urlset><loc>https://flixshows.me/watch/a</loc><loc>https://flixshows.me/watch/b</loc></urlset>"),
+        "https://flixshows.me/search-index.json": L.Resp(200, "u", {},
+            '[{"s":"a"},{"s":"b"},{"s":"c"}]'),
+        "https://flixshows.me/watch/a": L.Resp(200, "https://flixshows.me/watch/a", {}, page("a", "index,follow")),
+        "https://flixshows.me/watch/b": L.Resp(200, "https://flixshows.me/watch/b", {}, page("b", "index,follow")),
+        "https://flixshows.me/watch/c": L.Resp(200, "https://flixshows.me/watch/c", {}, page("c", left_out_robots)),
+        "https://img.flixshows.me/static/img/b1.jpg": L.Resp(200, "u", {"content-type": "image/jpeg",
+            "cache-control": "public, max-age=31536000, immutable"}, "x" * 500),
+        "https://flixshows.me/deploy-id.txt": L.Resp(200, "u", {}, "20260926T000000Z-1"),
+    }
+    nf = L.Resp(404, "u", {}, "<title>Page not found - FlixShows</title>")
+    monkeypatch.setattr(L, "fetch", lambda url: routes.get(url, nf))
+    import time
+    monkeypatch.setattr(time, "time", lambda: 1790500000.0)
+    b = {**B, "sitemap_min_locs": 1, "left_out_sample": 5, "home_title_prefix": "FlixShows"}
+    return L.run(b, random.Random(1))
+
+
+def test_served_identity_holds_when_left_out_pages_are_noindex(monkeypatch):
+    probs, m = _fake_site(monkeypatch)
+    assert m["watch_left_out"] == 1 and m["left_out_indexable"] == 0
+    assert not [p for p in probs if "LEFT OUT" in p], probs
+
+
+def test_left_out_page_that_is_indexable_fires(monkeypatch):
+    """The completeness failure a floor cannot see, at any size."""
+    probs, m = _fake_site(monkeypatch, left_out_robots="index,follow")
+    assert m["left_out_indexable"] == 1
+    assert any("LEFT OUT of the sitemap are indexable" in p for p in probs)

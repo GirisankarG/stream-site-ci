@@ -54,6 +54,8 @@ HINTS = {
     "install": "dependency install failed, nothing was checked",
     "drift": "the live site is not built from the pushed code (titles in the run log); "
              "push akv2011/stream-site so these checks test what readers are served",
+    "identity": "the sitemap and the pages' robots tags disagree about what is indexable "
+                "(counts in the run log)",
     "crawl": "the source did not answer this runner, which is what a datacenter IP being "
              "walled looks like. Not measured: this is NOT 'no new titles'",
     "discover": "discovery could not compare the source with the site",

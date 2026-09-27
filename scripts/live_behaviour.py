@@ -18,6 +18,9 @@ EFFECT each feature leaves behind, never that its setup ran:
 - every scrollable rail has dots, and starts with its left arrow disabled; both
   were wrong for the entire time the rails were inert, so either catches it
 - search returns results for a title we carry
+- analytics is RUNNING: window.sa_event is a function. The host allowlist only
+  proves the script loaded; a 200 carrying a broken body passes it while the
+  site records nothing, found weeks later as a flat dashboard (MS_Seo)
 - no uncaught page error on any page visited
 - a watch page has no iframe before a click: players mount only on a gesture
 - the hero trailer MOUNTS (youtube-nocookie, muted, aria-hidden), after its five
@@ -30,6 +33,13 @@ EFFECT each feature leaves behind, never that its setup ran:
 - the episode panel (fixture breaking-bad-2008, a title KNOWN to carry episode
   names; a title with no TMDB match legitimately shows "Episode 4") opens with
   named rows, runtimes, and exactly one WATCHING mark
+
+The trailer frame's own TEXT is read from inside the cross-origin YouTube frame
+(the driver can, page JavaScript cannot) and must not be YouTube's embed error.
+That is not playback: it proves WE configured the embed so YouTube accepts it.
+Found live 2026-09-27 by MS_UI: every visitor saw "Video player configuration
+error" (Error 153) because the site sends Referrer-Policy: no-referrer, which
+YouTube now refuses. The mount check passed it, since the frame loaded fine.
 
 Deliberately NOT asserted, because each is a third party's answer: that the
 trailer PLAYS (.hero-bg.playing) or that its mute button is VISIBLE. Both are set
@@ -184,6 +194,11 @@ def judge(m: dict) -> list[str]:
         P.append(f"the watch page has {m['watch_iframes']} iframe(s) before any click; players "
                  "must mount only on a gesture")
 
+    if m.get("sa_event") != "function":
+        P.append(f"analytics is not running: window.sa_event is {m.get('sa_event')!r}, not a "
+                 "function. The script host may still answer 200, so the allowlist passes "
+                 "while the site records no visits")
+
     # Hero trailer: gates first, so a runner that fails one is not read as the site.
     h = m.get("hero") or {}
     off = [g for g, ok in (h.get("gates") or {}).items() if not ok]
@@ -199,6 +214,12 @@ def judge(m: dict) -> list[str]:
             P.append("hero trailer mounted without mute=1, so it would autoplay with sound")
         if h.get("aria_hidden") != "true":
             P.append("hero trailer is not aria-hidden, so screen readers announce a decorative video")
+    ft = m.get("hero_frame_text") or ""
+    if h.get("mounted") and ("configuration error" in ft.lower()
+                             or __import__("re").search(r"\bError \d{3}\b", ft)):
+        P.append(f"the hero trailer shows YouTube's error to every visitor ({ft[:80]!r}): the "
+                 f"embed is misconfigured. Referrer-Policy is {m.get('referrer_policy')!r}; "
+                 "YouTube refuses embeds that arrive with no referrer")
     if m.get("phone_hero_mounted"):
         P.append("hero trailer mounted on a 390px phone, where its gate must refuse it")
 
@@ -275,9 +296,23 @@ def measure() -> dict:
         page.on("pageerror", lambda e: errors.append(str(e)[:160]))
 
         # ---- home
-        page.goto(SITE + "/", wait_until="load", timeout=60000)
+        home_resp = page.goto(SITE + "/", wait_until="load", timeout=60000)
         m["home_title"] = page.title()
+        m["sa_event"] = poll(page, "typeof window.sa_event", lambda v: v == "function", 25, 200)
         m["hero"] = poll(page, HERO_JS, lambda v: v["mounted"], 40, 200)   # up to 8s
+        m["referrer_policy"] = home_resp.headers.get("referrer-policy") if home_resp else None
+        m["hero_frame_text"] = None
+        for _ in range(40):                    # up to 10s for YouTube to render its body
+            yt = [f for f in page.frames if "youtube" in (f.url or "")]
+            if yt:
+                try:
+                    txt = yt[0].evaluate("document.body ? document.body.innerText : ''")
+                except Exception as e:                           # noqa: BLE001
+                    txt = f"<could not read the frame: {type(e).__name__}>"
+                if txt and txt.strip():
+                    m["hero_frame_text"] = txt.strip()[:200]
+                    break
+            page.wait_for_timeout(250)
         page.wait_for_timeout(1500)            # let the rail and search scripts initialise
         m["rails"] = page.evaluate(RAILS_JS)
         m["step"] = page.evaluate(STEP_JS)
@@ -370,8 +405,11 @@ def main() -> int:
                 "search_tiers": m.get("search_tiers"),
                 "page_errors": sum(len(m.get(f"{x}_errors", [])) for x in ("home", "watch", "series")),
                 "watch_iframes_before_click": m.get("watch_iframes"),
+                "analytics_sa_event": m.get("sa_event"),
                 "hero": {k: (m.get("hero") or {}).get(k) for k in ("mounted", "host", "muted")},
                 "hero_on_phone": m.get("phone_hero_mounted"),
+                "hero_frame_text": m.get("hero_frame_text"),
+                "referrer_policy": m.get("referrer_policy"),
                 "peek": m.get("peek"),
                 "hidden_but_rendered": sum(len(m.get(f"{x}_hidden_visible") or [])
                                            for x in ("home", "watch", "series")),
