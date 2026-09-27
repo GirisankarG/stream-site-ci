@@ -1,6 +1,6 @@
 {
-  "_why": "Committed numbers the live-site check compares against. Never yesterday's output: a self-comparison drifts every day and the tolerance ends up fitted to its own noise. Live sitemap held 9,354 URLs on 2026-09-24; the floor is ~85% of that so growth passes and a collapsed deploy (deploy.sh once nearly shipped 17 files) fails. Raise it deliberately when the catalogue grows, in a commit that says why.",
-  "sitemap_min_locs": 7900,
+  "_why": "Collapse guard only, not completeness. The sitemap count moves legitimately whenever a stream host dies (2026-09-24: 9,354 to 8,504 on purpose, f62b688), so a floor near the live count cries wolf on correct behaviour. 4,000 is about half of today's 8,504: it catches a broken or partial deploy, and completeness is checked separately as an identity (every page left out of the sitemap must be noindex). Never fit this to yesterday's output.",
+  "sitemap_min_locs": 4000,
   "home_title_prefix": "FlixShows",
   "not_found_title_prefix": "Page not found",
   "sample_size": 12,
@@ -15,5 +15,8 @@
   ],
   "image_host": "img.flixshows.me",
   "image_cache_control_must_contain": "max-age=31536000",
-  "_allowed_external_why": "Both measured in a browser on 2026-09-24 and both chosen: Simple Analytics (Arun asked for it, 2026-09-20) and the Cloudflare Pages beacon (auto-injected at runtime, so it is permitted, not required). Any third host fails. The property that survives is 'no third-party PLAYER bytes before a click', not 'no third party'."
+  "_allowed_external_why": "Both measured in a browser on 2026-09-24 and both chosen: Simple Analytics (Arun asked for it, 2026-09-20) and the Cloudflare Pages beacon (auto-injected at runtime, so it is permitted, not required). Any third host fails. The property that survives is 'no third-party PLAYER bytes before a click', not 'no third party'.",
+  "deploy_max_age_days": 10,
+  "_deploy_max_age_why": "Deploys ran every few days in September; 10 days is generous enough that a quiet week does not page. Parsed from deploy-id.txt's own leading UTC timestamp.",
+  "left_out_sample": 20
 }

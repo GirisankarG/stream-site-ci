@@ -114,6 +114,13 @@ jobs:
           python scripts/drift_check.py --built code/dist/search-index.json
           --live https://flixshows.me/search-index.json --summary drift.json
 
+      # Completeness as an identity, not a threshold: built - noindex == sitemap.
+      # Exact on the deployed build (13,631 - 5,433 = 8,198).
+      - name: Sitemap identity
+        id: identity
+        if: steps.build.outcome == 'success'
+        run: python scripts/identity_check.py --dist code/dist --summary identity.json
+
       - name: Structure, SEO and contrast
         id: verify
         if: steps.build.outcome == 'success'

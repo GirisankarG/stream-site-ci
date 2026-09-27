@@ -39,18 +39,34 @@ import json
 import sys
 from pathlib import Path
 
-KINDS = ("missing_ingestable", "behind_on_episodes", "disappeared", "tmdb_missing")
+# Known kinds, in mail order. Any other list-valued key in "findings" is handled
+# too, so stream_liveness's dead_hosts need no special casing beyond a label.
+KINDS = ("missing_ingestable", "behind_on_episodes", "disappeared", "tmdb_missing",
+         "dead_hosts", "degraded_hosts", "unverified_hosts")
 LABEL = {
     "missing_ingestable": "new source title(s) with episodes, not on the site",
     "behind_on_episodes": "series gained episodes we do not carry",
     "disappeared": "title(s) we carry are no longer listed by the source",
     "tmdb_missing": "recent TMDB release(s) not carried",
+    "dead_hosts": "stream host(s) newly dead",
+    "degraded_hosts": "stream host(s) newly degraded",
+    "unverified_hosts": "stream host(s) this runner could not verify (walled, not dead)",
 }
+# Kinds where LEAVING the set is news too: a host that plays again is worth a
+# line, a title leaving the backlog is just the backlog shrinking.
+RECOVERABLE = {"dead_hosts": "stream host(s) playing again", "degraded_hosts": "stream host(s) recovered"}
 MAX_LINES = 15      # per kind in the mail; the counts carry the rest
 
 
 def _key(kind: str, item: dict) -> str:
-    return str(item.get("tmdb_id") if kind == "tmdb_missing" else item.get("id"))
+    if kind == "tmdb_missing":
+        return str(item.get("tmdb_id"))
+    return str(item.get("host") or item.get("id"))
+
+
+def _kinds(findings: dict) -> list[str]:
+    extra = [k for k, v in findings.items() if isinstance(v, list) and k not in KINDS]
+    return [k for k in KINDS if k in findings] + sorted(extra)
 
 
 def diff(prev: dict | None, findings: dict) -> tuple[dict, dict]:
@@ -64,7 +80,7 @@ def diff(prev: dict | None, findings: dict) -> tuple[dict, dict]:
     prev_seen = (prev or {}).get("seen", {})
     new: dict[str, list[dict]] = {}
     seen: dict[str, dict] = {}
-    for kind in KINDS:
+    for kind in _kinds(findings):
         items = findings.get(kind) or []
         before = prev_seen.get(kind, {})
         now = {}
@@ -77,10 +93,24 @@ def diff(prev: dict | None, findings: dict) -> tuple[dict, dict]:
                 fresh.append(it)
         new[kind] = fresh
         seen[kind] = now
+        if kind in RECOVERABLE and prev is not None:
+            gone = sorted(set(before) - set(now))
+            if gone:
+                new[f"{kind}__recovered"] = [{"host": g, "title": g} for g in gone]
     return new, {"seen": seen}
 
 
+def _label(kind: str) -> str:
+    if kind.endswith("__recovered"):
+        return RECOVERABLE[kind[: -len("__recovered")]]
+    return LABEL.get(kind, kind.replace("_", " "))
+
+
 def _line(kind: str, it: dict) -> str:
+    if "host" in it and not kind.endswith("__recovered"):
+        return (f"{it['host']}: {it.get('dead', '?')} of {it.get('checked', '?')} sampled dead, "
+                f"{it.get('urls_published', '?')} streams published" +
+                (f" ({it['why']})" if it.get("why") else ""))
     t = it.get("title", "?")
     if kind == "behind_on_episodes":
         return f"{t}: we have {it.get('have')}, source has {it.get('source')}"
@@ -91,12 +121,13 @@ def _line(kind: str, it: dict) -> str:
 
 def build_report(summary: dict, prev: dict | None) -> tuple[dict, dict | None]:
     """Pure. (report for report.py, state to save or None to keep the old one)."""
+    suite = summary.get("suite") or "Discovery"
     if summary.get("problems"):
-        return ({"suite": "Discovery", "ok": False, "problems": summary["problems"],
+        return ({"suite": suite, "ok": False, "problems": summary["problems"],
                  "measured": summary.get("measured", {})}, None)
     findings = summary.get("findings")
     if not isinstance(findings, dict):
-        return ({"suite": "Discovery", "ok": False, "measured": summary.get("measured", {}),
+        return ({"suite": suite, "ok": False, "measured": summary.get("measured", {}),
                  "problems": ["discovery summary has no 'findings' object, so nothing new can "
                               "be told apart from the standing backlog; the checker's output "
                               "contract changed"]}, None)
@@ -108,20 +139,19 @@ def build_report(summary: dict, prev: dict | None) -> tuple[dict, dict | None]:
     baseline = prev is None
 
     if total_new == 0:
-        return {"suite": "Discovery", "ok": True, "problems": [], "notify": [],
+        return {"suite": suite, "ok": True, "problems": [], "notify": [],
                 "measured": measured}, state
 
-    parts = [f"{len(new[k])} {LABEL[k]}" for k in KINDS if new[k]]
+    order = [k for k in new if new[k]]
+    parts = [f"{len(new[k])} {_label(k)}" for k in order]
     head = ("first run, backlog baseline: " if baseline else "since the last run: ") + ", ".join(parts)
     lines = [head]
-    for k in KINDS:
-        if not new[k]:
-            continue
-        lines.append(f"{LABEL[k]} ({len(new[k])}):")
+    for k in order:
+        lines.append(f"{_label(k)} ({len(new[k])}):")
         lines += [f"  {_line(k, it)}" for it in new[k][:MAX_LINES]]
         if len(new[k]) > MAX_LINES:
             lines.append(f"  ...and {len(new[k]) - MAX_LINES} more")
-    return {"suite": "Discovery", "ok": True, "problems": [], "notify": lines,
+    return {"suite": suite, "ok": True, "problems": [], "notify": lines,
             "measured": measured}, state
 
 

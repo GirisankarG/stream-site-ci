@@ -1,0 +1,108 @@
+name: Stream liveness
+
+# Samples published stream URLs per host and judges the bytes, so a host that
+# answers 200 with an error page is dead and a 59KB playlist under a 400 is
+# alive. First run found 4 dead hosts carrying 5,672 published streams, one of
+# them returning HTTP 500 on 5,580 (withdrawn 2026-09-24, f62b688).
+#
+# A dead host is a FINDING, not a failure: third-party hosts die as a matter of
+# course. scripts/digest.py mails only a host that is newly dead or plays
+# again, so a host that stays dead for a week is one mail, not seven. Red only
+# when the sample itself could not be taken. From a GitHub runner some hosts
+# will wall a datacenter IP; the script reports those as UNVERIFIED, never
+# dead.
+#
+# Host names are the site's stream sources, so the report runs
+# --private-detail: counts in this public log, names only in the mail.
+
+on:
+  schedule:
+    - cron: '29 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stream-liveness
+  cancel-in-progress: false
+
+jobs:
+  liveness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to start without the secrets
+        id: require-secrets
+        env:
+          CODE_REPO_PAT: ${{ secrets.CODE_REPO_PAT }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: |
+          missing=""
+          for v in CODE_REPO_PAT RESEND_API_KEY ALERT_EMAIL ALERT_FROM; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+          if [ -n "$missing" ]; then
+            echo "::error::not set on this repository:$missing"
+            exit 1
+          fi
+
+      - name: Check out akv2011/stream-site
+        id: checkout-code
+        uses: actions/checkout@v4
+        with:
+          repository: akv2011/stream-site
+          ref: main
+          token: ${{ secrets.CODE_REPO_PAT }}
+          path: code
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        id: install
+        run: pip install --quiet httpx pytest
+
+      - name: Prove the checkers still fire
+        id: tests
+        run: |
+          python -m pytest tests/test_digest.py -q
+          (cd code && python -m pytest scripts/test_stream_liveness.py -q)
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: liveness-state-${{ github.run_id }}
+          restore-keys: liveness-state-
+
+      - name: Sample published streams by host
+        id: sample
+        if: steps.tests.outcome == 'success'
+        working-directory: code
+        run: python scripts/stream_liveness.py --per-host 8 --summary "$GITHUB_WORKSPACE/liveness.json"
+
+      - name: What moved since the last run
+        id: digest
+        if: steps.sample.outcome == 'success' || steps.sample.outcome == 'failure'
+        run: python scripts/digest.py --discovery liveness.json --state state/state.json --out report.json
+
+      - uses: actions/cache/save@v4
+        if: steps.digest.outcome == 'success'
+        with:
+          path: state
+          key: liveness-state-${{ github.run_id }}
+
+      - name: Report
+        if: always()
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: python scripts/report.py --summary report.json --suite "Stream liveness" --private-detail

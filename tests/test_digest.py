@@ -66,3 +66,36 @@ def test_main_writes_counts_only_to_the_log(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Neagley" not in out and "I Live Alone" not in out
     assert (tmp_path / "st" / "s.json").exists()
+
+
+# ----------------------------------------------- stream liveness through the digest
+
+H = lambda host, dead=8: {"host": host, "checked": 8, "alive": 8 - dead, "dead": dead,
+                          "unverified": 0, "urls_published": 5580, "why": "HTTP 500"}
+
+
+def live(dead_hosts):
+    return {"suite": "StreamLiveness", "ok": True, "problems": [], "measured": {},
+            "findings": {"dead_hosts": dead_hosts, "degraded_hosts": [], "unverified_hosts": []}}
+
+
+def test_newly_dead_host_is_reported_under_its_own_suite():
+    _, s1 = D.build_report(live([]), None)
+    rep, _ = D.build_report(live([H("hls16.example")]), s1)
+    assert rep["suite"] == "StreamLiveness"
+    assert rep["notify"][0] == "since the last run: 1 stream host(s) newly dead"
+    assert any("hls16.example: 8 of 8 sampled dead, 5580 streams published (HTTP 500)" in l
+               for l in rep["notify"])
+
+
+def test_host_still_dead_tomorrow_is_silent():
+    _, s1 = D.build_report(live([H("hls16.example")]), None)
+    rep, _ = D.build_report(live([H("hls16.example")]), s1)
+    assert rep["notify"] == []
+
+
+def test_host_that_plays_again_is_news():
+    """Anime_CI_Sentry's rule: mail when a server is newly demoted OR plays again."""
+    _, s1 = D.build_report(live([H("hls16.example")]), None)
+    rep, _ = D.build_report(live([]), s1)
+    assert any("playing again" in l for l in rep["notify"])

@@ -1,0 +1,106 @@
+name: Relay (hls.flixshows.me)
+
+# The relay carries every locked stream on the site, 52,892 of them on
+# 2026-09-27, and until this nothing checked it. If it stops, every one of
+# those episodes fails and every other check here stays green.
+#
+# stream-site/scripts/relay_check.py signs a real URL, follows it to a
+# manifest and then a segment, and judges BYTES: #EXTM3U for the manifest, a TS
+# sync byte or an fMP4 box plus a size floor for the segment. It replays the
+# real client, byte ranges included: its first run reported a false outage
+# (HTTP 416) because live manifests use EXT-X-BYTERANGE and a plain GET is not
+# what a player sends.
+#
+# The relay is OURS, so a failure is an outage and goes red, not a finding.
+# It prints no signed URL, upstream address or secret; the script's own test
+# asserts that on every byte of its output. Hourly, public, unmetered.
+
+on:
+  schedule:
+    - cron: '11 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to start without the secrets
+        id: require-secrets
+        env:
+          CODE_REPO_PAT: ${{ secrets.CODE_REPO_PAT }}
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: |
+          missing=""
+          for v in CODE_REPO_PAT PROXY_SECRET RESEND_API_KEY ALERT_EMAIL ALERT_FROM; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+          if [ -n "$missing" ]; then
+            echo "::error::not set on this repository:$missing"
+            exit 1
+          fi
+
+      - name: Check out akv2011/stream-site
+        id: checkout-code
+        uses: actions/checkout@v4
+        with:
+          repository: akv2011/stream-site
+          ref: main
+          token: ${{ secrets.CODE_REPO_PAT }}
+          path: code
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        id: install
+        run: pip install --quiet httpx pytest
+
+      - name: Prove the checker still fires
+        id: tests
+        working-directory: code
+        run: python -m pytest scripts/test_relay_check.py -q
+
+      - name: Sign, fetch and judge a real stream
+        id: relay
+        if: steps.tests.outcome == 'success'
+        working-directory: code
+        env:
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+        run: python scripts/relay_check.py --summary "$GITHUB_WORKSPACE/summary.json"
+
+      - uses: actions/cache/restore@v4
+        if: always()
+        with:
+          path: mailstate
+          key: relay-mail-${{ github.run_id }}
+          restore-keys: relay-mail-
+
+      - name: Report
+        if: always()
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: python scripts/report.py --summary summary.json --suite "Relay" --state mailstate/mail.json
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: mailstate
+          key: relay-mail-${{ github.run_id }}

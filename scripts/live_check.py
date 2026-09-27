@@ -296,6 +296,48 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
         P += pp
     M["sampled_bad"] = dead
 
+    # 4b) Completeness, as an IDENTITY rather than a threshold. The sitemap count
+    # moves legitimately every time a stream host dies (09-24: 9,354 to 8,504 on
+    # purpose, f62b688), so a floor fitted to it cries wolf on correct behaviour.
+    # What does not move: watch pages served = pages in the sitemap + pages left
+    # out, and every page left out must be noindex. A sitemap that wrongly dropped
+    # indexable pages shows up here as left-out pages WITHOUT noindex, whatever its
+    # size. Measured 2026-09-27: 13,631 served, 8,198 in the sitemap, 5,433 left
+    # out, 6 of 6 sampled noindex. The other half, sitemap pages being indexable,
+    # is step 4's noindex assertion.
+    ix = fetch(site + "/search-index.json")
+    served: set[str] = set()
+    if ix.status != 200:
+        P.append(f"search-index.json: HTTP {ix.status} {ix.error}".strip()
+                 + ", so sitemap completeness could not be checked")
+    else:
+        try:
+            served = {e["s"] for e in json.loads(ix.body) if isinstance(e, dict) and e.get("s")}
+        except (json.JSONDecodeError, TypeError, KeyError):
+            P.append("search-index.json is not the expected list of {s: slug}")
+    in_sitemap = {urllib.parse.unquote(urllib.parse.urlsplit(u).path.split("/watch/", 1)[1]).rstrip("/")
+                  for u in locs if "/watch/" in u}
+    M["watch_served"], M["watch_in_sitemap"] = len(served), len(in_sitemap)
+    if served:
+        orphans = in_sitemap - served
+        if orphans:
+            P.append(f"the sitemap advertises {len(orphans)} watch pages the site does not serve, "
+                     f"e.g. {sorted(orphans)[:3]}")
+        left_out = sorted(served - in_sitemap)
+        M["watch_left_out"] = len(left_out)
+        probe = rng.sample(left_out, min(b["left_out_sample"], len(left_out)))
+        indexable = []
+        for slug in probe:
+            r = fetch(f"{site}/watch/{slug}")
+            mr = _ROBOTS.search(r.body) if r.status == 200 else None
+            if r.status == 200 and not (mr and "noindex" in mr.group(1).lower()):
+                indexable.append(slug)
+        M["left_out_sampled"], M["left_out_indexable"] = len(probe), len(indexable)
+        if indexable:
+            P.append(f"{len(indexable)} of {len(probe)} sampled pages LEFT OUT of the sitemap are "
+                     f"indexable, e.g. {indexable[:3]}: the sitemap dropped pages the build meant "
+                     "to include")
+
     # 5) Real 404s on every path type the sitemap uses, plus the bare root.
     token = f"ci-probe-{rng.randrange(10**8)}"
     probes = [f"{site}/{token}"] + [f"{site}/{seg}/{token}" for seg in M["sampled_types"]
@@ -314,7 +356,36 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
     else:
         P += judge_image(imgs[0], fetch(imgs[0]), b)
 
+    # 7) Deploys that STOP. A site no longer receiving deploys is byte-identical
+    # to a healthy one and every assert above stays green while the content ages.
+    # deploy.sh writes deploy-id.txt as "<UTC timestamp>-<random>", so its own
+    # timestamp dates the last deploy and no state has to be carried between runs.
+    d = fetch(site + "/deploy-id.txt")
+    M["deploy_id"] = d.body.strip()[:40] if d.status == 200 else f"HTTP {d.status}"
+    if d.status != 200:
+        P.append(f"deploy-id.txt: HTTP {d.status} {d.error}".strip() + ", so the deploy age is unknown")
+    else:
+        age = deploy_age_days(d.body.strip(), time.time())
+        M["deploy_age_days"] = None if age is None else round(age, 1)
+        if age is None:
+            P.append(f"deploy-id.txt reads {d.body.strip()[:40]!r}, not '<YYYYMMDDTHHMMSSZ>-<id>'; "
+                     "its format changed and this check must be updated")
+        elif age > b["deploy_max_age_days"]:
+            P.append(f"the live site was last deployed {age:.0f} days ago, over the "
+                     f"{b['deploy_max_age_days']}-day limit: deploys have stopped, so new "
+                     "titles and fixes are not reaching readers")
+
     return P, M
+
+
+def deploy_age_days(deploy_id: str, now: float) -> float | None:
+    """Days since the timestamp that leads a deploy id, or None if it does not parse."""
+    import datetime as _dt
+    m = re.match(r"^(\d{8}T\d{6}Z)", deploy_id)
+    if not m:
+        return None
+    ts = _dt.datetime.strptime(m.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=_dt.timezone.utc)
+    return (now - ts.timestamp()) / 86400
 
 
 def main() -> int:
