@@ -417,10 +417,12 @@ def measure() -> dict:
                       " if (b) b.focus({preventScroll: true}); })()")
         m["home_title"] = page.title()
         m["sa_event"] = poll(page, "typeof window.sa_event", lambda v: v == "function", 50, 200)
-        # Up to 45s. Today the trailer mounts only after window load, which took
-        # 12.9s and 21.1s on two measured runs (analytics plus dozens of posters),
-        # so an 8s window started at DOMContentLoaded read a working trailer as
-        # never mounted. The next build gates it on the first backdrop instead.
+        # Up to 45s. Today the trailer mounts only after window load, so it waits
+        # on every subresource on the page. Window load took 12.9s and 21.1s on two
+        # runs from a congested laptop (load average 32, a dozen sessions on one
+        # link), which is that machine, not a visitor; it was enough to make an 8s
+        # window started at DOMContentLoaded read a working trailer as never
+        # mounted. The next build gates it on the first backdrop instead.
         m["hero"] = poll(page, HERO_JS, lambda v: v["mounted"], 225, 200)
         m["referrer_policy"] = home_resp.headers.get("referrer-policy") if home_resp else None
         m["hero_frame_text"] = youtube_text(page)
