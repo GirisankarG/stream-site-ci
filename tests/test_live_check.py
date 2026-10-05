@@ -244,3 +244,48 @@ def test_rotating_hero_links_are_all_collected():
     body = ('<section class="hero"><a href="watch/x">x</a></section>'
             '<section class="hero" inert><a href="watch/y">y</a></section>')
     assert L.hero_links(body) == {"watch/x", "watch/y"}
+
+
+# ------------------------------------- shelves vs rankings (MS_UI, 2026-09-30)
+
+def _rail(name, slugs, rank=False):
+    cards = "".join(f'<a class="card" href="{s}">{s}</a>' for s in slugs)
+    return (f'<section class="rail{" rail-rank" if rank else ""}"{" data-rank" if rank else ""}>'
+            f"<div class=\"rail-hd\"><h2>{name}</h2></div>{cards}</section>")
+
+
+RAILS = (_rail("Popular Movies", ["watch/a", "watch/b"])
+         + _rail("Top 10 Movies", [f"watch/t{i}" for i in range(9)] + ["watch/a"], rank=True))
+
+
+def test_a_title_on_a_shelf_and_in_a_ranking_is_not_a_repeat():
+    """The 13.5-hour false alarm: watch/a is in Popular Movies and Top 10 Movies."""
+    shelf, ranks = L.home_rails(RAILS)
+    assert shelf == ["watch/a", "watch/b"]                 # the ranking is excluded
+    assert len(ranks["Top 10 Movies"]) == 10
+
+
+def test_a_hero_title_in_a_ranking_is_not_a_repeat_but_on_a_shelf_still_is():
+    hero = '<section class="hero"><a href="watch/a">a</a></section>'
+    shelf, _ = L.home_rails(hero + _rail("Top 10 Movies", ["watch/a"], rank=True))
+    assert not (L.hero_links(hero) & set(shelf))
+    shelf, _ = L.home_rails(hero + _rail("Popular Movies", ["watch/a"]))
+    assert L.hero_links(hero) & set(shelf) == {"watch/a"}
+
+
+def test_a_real_shelf_repeat_is_still_caught():
+    """What the rule exists for: the same title twice on shelves."""
+    shelf, _ = L.home_rails(RAILS + _rail("Trending", ["watch/a"]))
+    assert [u for u in shelf if shelf.count(u) > 1] == ["watch/a", "watch/a"]
+
+
+def test_a_ranking_that_repeats_itself_or_is_not_ten_is_visible():
+    _, ranks = L.home_rails(_rail("Top 10 TV Shows", ["watch/x", "watch/x"], rank=True))
+    cards = ranks["Top 10 TV Shows"]
+    assert len(cards) != 10 and len(set(cards)) != len(cards)
+
+
+def test_the_client_side_card_template_is_not_a_card():
+    """href="watch/'+e.s+'" in the search script read as a 311th card."""
+    shelf, _ = L.home_rails(RAILS + '<a class="card" href="watch/\'+e.s+\'">tpl</a>')
+    assert "watch/'+e.s+'" not in shelf
