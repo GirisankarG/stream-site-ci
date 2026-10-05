@@ -245,19 +245,34 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
     # showed 165 cards for 109 titles (Game of Thrones 4 times) and its hero title
     # again in a row below; the next build fixes both (MS_UI, b937e35). Exactly
     # one h1, whatever the hero carousel does.
+    #
+    # SHELVES ONLY, since 2026-09-30 (MS_UI): a ranking row makes a different claim
+    # from a shelf, so a title in Popular Movies and again in Top 10 Movies is
+    # information, not a repeat. Counting both sent this red for 13.5 hours on a
+    # correct site. MS_UI marks ranking sections `data-rank` for exactly this split,
+    # so the rankings get their own rule rather than no rule.
     if home.status == 200:
-        hrefs = home_card_links(home.body)
-        dupes = sorted({u for u in hrefs if hrefs.count(u) > 1})
+        shelf, ranks = home_rails(home.body)
+        dupes = sorted({u for u in shelf if shelf.count(u) > 1})
         hero = hero_links(home.body)
         h1s = len(re.findall(r"<h1\b", home.body, re.I))
-        M.update(home_cards=len(hrefs), home_card_titles=len(set(hrefs)), home_h1=h1s)
-        if not hrefs:
-            P.append("home page has 0 title cards, so the homepage was not checked")
+        M.update(home_cards=len(shelf), home_card_titles=len(set(shelf)),
+                 home_ranked_cards=sum(len(c) for c in ranks.values()), home_h1=h1s,
+                 home_rule_for_build=HOME_RULE_BUILD)
+        if not shelf:
+            P.append("home page has 0 title cards on its shelves, so the homepage was not checked")
         if dupes:
-            P.append(f"the homepage shows {len(dupes)} titles more than once ({len(hrefs)} cards "
-                     f"for {len(set(hrefs))} titles), e.g. {dupes[:3]}")
-        if hero & set(hrefs):
-            P.append(f"the hero title also appears in a row below it: {sorted(hero & set(hrefs))[:3]}")
+            P.append(f"the homepage shows {len(dupes)} titles more than once on its shelves "
+                     f"({len(shelf)} cards for {len(set(shelf))} titles), e.g. {dupes[:3]}")
+        if hero & set(shelf):
+            P.append(f"the hero title also appears on a shelf below it: "
+                     f"{sorted(hero & set(shelf))[:3]}")
+        for name, cards in sorted(ranks.items()):
+            if len(set(cards)) != len(cards):
+                P.append(f"the {name!r} ranking lists a title twice: "
+                         f"{sorted({u for u in cards if cards.count(u) > 1})[:3]}")
+            if name.lower().startswith("top 10") and len(cards) != 10:
+                P.append(f"the {name!r} ranking holds {len(cards)} cards, not 10")
         if h1s != 1:
             P.append(f"the homepage has {h1s} h1 elements, not exactly 1")
 
@@ -398,6 +413,10 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
     return P, M
 
 
+# The page carries card markup that is NOT a card: the search script holds a
+# client-side template, href="watch/'+e.s+'", that matches this pattern exactly.
+# Run this over a whole document and it counts as a title. Collect through
+# home_rails(), which only looks inside rail sections.
 _CARD = re.compile(r'<a\b[^>]*class="card[^"]*"[^>]*href="([^"]+)"'
                    r'|<a\b[^>]*href="([^"]+)"[^>]*class="card[^"]*"', re.I)
 _HERO = re.compile(r'<section[^>]*class="hero\b[\s\S]*?</section>', re.I)
@@ -406,6 +425,33 @@ _HERO = re.compile(r'<section[^>]*class="hero\b[\s\S]*?</section>', re.I)
 def home_card_links(body: str) -> list[str]:
     """Every title card's link on the page, duplicates kept, so a repeat is countable."""
     return [a or b for a, b in _CARD.findall(body)]
+
+
+# The build this homepage expectation was written against. It rides in the metrics
+# and the mail, so a red check says which design it is judging and a stale rule is
+# telling itself apart from a broken product.
+HOME_RULE_BUILD = "2026-09-30 rails (shelves + data-rank rankings)"
+
+_RAIL = re.compile(r'(<section\b[^>]*class="rail[^"]*"[^>]*>)([\s\S]*?)</section>', re.I)
+_RAIL_NAME = re.compile(r"<h2[^>]*>([^<]*)", re.I)
+
+
+def home_rails(body: str) -> tuple[list[str], dict[str, list[str]]]:
+    """Shelf cards (duplicates kept), and each ranking row's cards by its heading.
+
+    Only cards inside a rail section count, which also drops the client-side card
+    template (href="watch/'+e.s+'") that the raw card regex reads as a 311th card.
+    """
+    shelf: list[str] = []
+    ranks: dict[str, list[str]] = {}
+    for tag, inner in _RAIL.findall(body):
+        cards = home_card_links(inner)
+        if "data-rank" in tag:
+            name = _RAIL_NAME.search(inner)
+            ranks[name.group(1).strip() if name else "unnamed ranking"] = cards
+        else:
+            shelf += cards
+    return shelf, ranks
 
 
 def hero_links(body: str) -> set[str]:
