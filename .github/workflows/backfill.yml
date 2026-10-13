@@ -10,6 +10,12 @@ name: backfill
 on:
   workflow_dispatch:
     inputs:
+      kind:
+        description: which lookups
+        required: true
+        default: lookups
+        type: choice
+        options: [lookups, streams]
       shards:
         description: JSON list of queue numbers
         required: true
@@ -47,6 +53,7 @@ jobs:
             ci/step.sh
             scripts/harvest
             ci/subs_q
+            ci/streams_q
           sparse-checkout-cone-mode: false
 
       - uses: actions/setup-python@v5
@@ -63,7 +70,7 @@ jobs:
         run: |
           mkdir -p w
           set +e
-          bash code/ci/step.sh backfill lookups > w/run.log 2>&1
+          bash code/ci/step.sh backfill "${{ inputs.kind }}" > w/run.log 2>&1
           rc=$?
           set -e
           grep -E '^\s+[0-9]+/[0-9]+' w/run.log | tail -2 || true
@@ -82,6 +89,6 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: out-${{ matrix.shard }}
+          name: ${{ inputs.kind }}-${{ matrix.shard }}
           path: out.enc
           retention-days: 3
