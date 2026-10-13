@@ -1,0 +1,87 @@
+# One-off parallel lookups, one queue per job. Run by hand.
+#
+# Everything this needs is in the private code repository, checked out with a
+# read-only deploy key. This public file names nothing, and the job log shows
+# progress counts only: the full log and the results go into an artifact that
+# is encrypted before upload, because artifacts of a public repository can be
+# downloaded by anyone signed in to GitHub.
+name: backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: JSON list of queue numbers
+        required: true
+        default: "[3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42]"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJSON(inputs.shards) }}
+    steps:
+      - name: Secrets present
+        env:
+          K: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          R: ${{ secrets.CODE_REPO }}
+          E: ${{ secrets.RESULT_KEY }}
+        run: |
+          missing=""
+          [ -n "$K" ] || missing="$missing PRIVATE_REPO_DEPLOY_KEY"
+          [ -n "$R" ] || missing="$missing CODE_REPO"
+          [ -n "$E" ] || missing="$missing RESULT_KEY"
+          if [ -n "$missing" ]; then echo "::error::secret(s) not set:$missing"; exit 1; fi
+
+      - name: Code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.CODE_REPO }}
+          ssh-key: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          path: code
+          sparse-checkout: |
+            ci/step.sh
+            scripts/harvest
+            ci/subs_q
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: pip install --quiet httpx
+
+      - name: Lookups
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          mkdir -p w
+          set +e
+          bash code/ci/step.sh backfill lookups > w/run.log 2>&1
+          rc=$?
+          set -e
+          grep -E '^\s+[0-9]+/[0-9]+' w/run.log | tail -2 || true
+          rows=$(cat w/data/*.jsonl 2>/dev/null | wc -l)
+          echo "exit $rc, $rows rows"
+          [ "$rows" -gt 0 ]
+
+      - name: Encrypt
+        if: always()
+        env:
+          RESULT_KEY: ${{ secrets.RESULT_KEY }}
+        run: |
+          cd w
+          tar -czf - run.log $(ls data/*.jsonl 2>/dev/null) | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:RESULT_KEY -out ../out.enc
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: out-${{ matrix.shard }}
+          path: out.enc
+          retention-days: 3
