@@ -122,19 +122,6 @@ jobs:
           echo "exit $rc"
           exit $rc
 
-      # After the deploy, never before: IndexNow says "come and look now".
-      # The script refuses on its own (key file not live, sitemap cut short),
-      # submits only URLs it has not sent before, and records them in a
-      # tracked file that is pushed with the data.
-      - name: Tell IndexNow about today's pages
-        id: indexnow
-        if: steps.deploy.outcome == 'success'
-        continue-on-error: true
-        working-directory: code
-        run: |
-          set -o pipefail
-          python scripts/indexnow.py 2>&1 | sed -E 's#https?://[^ ]*#<url>#g'
-
       - name: Push today's data back
         id: push-data
         if: steps.deploy.outcome == 'success'
@@ -142,8 +129,30 @@ jobs:
         run: |
           git config user.name "flixshows-sync"
           git config user.email "sync@flixshows.me"
-          git add -u -- data/ docs/indexing/
+          git add -u -- data/
           git commit -q -m "Daily sync $(date -u +%F): new titles and episodes from the source" -m "[skip ci]"
+          for i in 1 2 3; do
+            git pull -q --rebase origin main && git push -q origin HEAD:main && exit 0
+            sleep 10
+          done
+          exit 1
+
+      # After the deploy, never before: IndexNow says "come and look now". And
+      # after the pull above, so it reads the latest ledger: a hand run may have
+      # recorded the same URLs while this job was building. The script refuses
+      # on its own (key file not live, sitemap cut short) and sends only URLs
+      # the ledger does not hold.
+      - name: Tell IndexNow about today's pages
+        id: indexnow
+        if: steps.push-data.outcome == 'success'
+        continue-on-error: true
+        working-directory: code
+        run: |
+          set -o pipefail
+          python scripts/indexnow.py 2>&1 | sed -E 's#https?://[^ ]*#<url>#g'
+          git add -u -- docs/indexing/
+          git diff --cached --quiet && exit 0
+          git commit -q -m "IndexNow ledger after the daily sync" -m "[skip ci]"
           for i in 1 2 3; do
             git pull -q --rebase origin main && git push -q origin HEAD:main && exit 0
             sleep 10
