@@ -9,10 +9,8 @@ name: discovery
 # 400-line backlog does not arrive every morning until it is filtered. Red means
 # only that the measurement itself could not be trusted.
 #
-# MANUAL DISPATCH ONLY until kisskh_crawl.py lives in akv2011/stream-site at
-# scripts/crawl/. Scheduled before that, it would fail daily for a known reason
-# and teach the inbox to ignore [FlixShows]. Add `schedule: - cron: '5 8 * * *'`
-# (one cron, this file only) in the commit that confirms the first green run.
+# MANUAL DISPATCH ONLY. sync.yml now adds what this finds, every day; run this
+# by hand for the full backlog report.
 #
 # Logs are public: every script here prints counts only, and the report runs
 # --private-detail so titles reach the mail and nothing else. If the source
@@ -87,7 +85,7 @@ jobs:
       - name: List the source's titles
         id: crawl
         working-directory: code
-        run: python scripts/crawl/kisskh_crawl.py --list-only > "$RUNNER_TEMP/crawl.json"
+        run: bash ci/step.sh discovery crawl
 
       - name: Compare the source and TMDB with the site
         id: discover

@@ -35,8 +35,8 @@ real.
 `discovery.yml` is a **notification**, green when it finds something: the
 backlog is a to-do list, not a fault. It goes red only when the measurement
 itself cannot be trusted, including when the source walls GitHub's runner,
-which is reported as "not measured", never as "no new titles". It gets a cron
-once `kisskh_crawl.py` lives in the code repo at `scripts/crawl/`.
+which is reported as "not measured", never as "no new titles". It stays manual:
+`sync.yml` adds what it finds every day.
 
 `live-check.yml` needs no private code so the live signal survives whatever
 happens to the token. That split exists because of what happened next.
