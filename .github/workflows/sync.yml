@@ -129,7 +129,7 @@ jobs:
         run: |
           git config user.name "flixshows-sync"
           git config user.email "sync@flixshows.me"
-          git add data/catalog.json data/subs.json.gz data/first_seen.json data/kisskh_seg_hosts.json 2>/dev/null || true
+          git add -u -- data/
           git commit -q -m "Daily sync $(date -u +%F): new titles and episodes from the source" -m "[skip ci]"
           for i in 1 2 3; do
             git pull -q --rebase origin main && git push -q origin HEAD:main && exit 0
