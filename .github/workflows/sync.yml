@@ -131,7 +131,9 @@ jobs:
         if: steps.deploy.outcome == 'success'
         continue-on-error: true
         working-directory: code
-        run: python scripts/indexnow.py 2>&1 | grep -v -i 'http' || true
+        run: |
+          set -o pipefail
+          python scripts/indexnow.py 2>&1 | sed -E 's#https?://[^ ]*#<url>#g'
 
       - name: Push today's data back
         id: push-data
