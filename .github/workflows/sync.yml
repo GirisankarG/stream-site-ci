@@ -1,0 +1,147 @@
+# The daily sync: new titles and new episodes from the source, onto the live
+# site, with subtitles. Runs here, never on a Mac.
+#
+# The private repository is the state: data/catalog.json and data/subs.json.gz
+# go in, today's additions are merged into them (scripts/sync/daily.py), the
+# site is built and deployed by the same deploy.sh and guards a hand deploy
+# uses, in its pages-only mode (the 1 GB of images is not in the repository;
+# new posters come through the relay), and only then are the two files pushed
+# back with a write deploy key. A deploy that a guard refuses pushes nothing,
+# so tomorrow's run redoes the day.
+#
+# Public logs show counts only. The full log is mailed, never printed.
+name: sync
+
+on:
+  schedule:
+    - cron: '35 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to start without the secrets
+        id: require-secrets
+        env:
+          SYNC_DEPLOY_KEY: ${{ secrets.SYNC_DEPLOY_KEY }}
+          CODE_REPO: ${{ secrets.CODE_REPO }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: |
+          missing=""
+          for v in SYNC_DEPLOY_KEY CODE_REPO CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID PROXY_SECRET RESEND_API_KEY ALERT_EMAIL ALERT_FROM; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then echo "::error::secret(s) not set:$missing"; exit 1; fi
+
+      - name: Check out the code and its data
+        id: checkout-code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.CODE_REPO }}
+          ssh-key: ${{ secrets.SYNC_DEPLOY_KEY }}
+          path: code
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - id: install
+        run: pip install --quiet httpx
+
+      # Which titles were already asked at today's episode count. Losing it
+      # costs one day of re-asking about 300 titles, nothing more.
+      - uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: sync-state-${{ github.run_id }}
+          restore-keys: sync-state-
+
+      - name: New titles, new episodes, their streams and subtitles
+        id: sync
+        working-directory: code
+        run: |
+          mkdir -p ../state
+          set +e
+          python -u scripts/sync/daily.py --work "$RUNNER_TEMP/sync" --state ../state/seen.json > "$RUNNER_TEMP/sync.log" 2>&1
+          rc=$?
+          set -e
+          grep -E '^(listing|new titles|  [0-9]+ unchanged|details|stream lookups|subtitle lookups|incremental|  refreshed|  entries|  episodes   |  harvested streams|  episodes gone)' "$RUNNER_TEMP/sync.log" || true
+          echo "exit $rc"
+          exit $rc
+
+      - uses: actions/cache/save@v4
+        if: steps.sync.outcome == 'success'
+        with:
+          path: state
+          key: sync-state-${{ github.run_id }}
+
+      - name: Anything to ship
+        id: changed
+        working-directory: code
+        run: |
+          if git diff --quiet -- data/catalog.json data/subs.json.gz; then
+            echo "nothing new today"; echo "ship=0" >> "$GITHUB_OUTPUT"
+          else
+            git diff --stat -- data/ | tail -1; echo "ship=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and deploy, pages only, every guard on
+        id: deploy
+        if: steps.changed.outputs.ship == '1'
+        working-directory: code
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          PYTHON: python
+        run: |
+          set +e
+          bash deploy.sh > "$RUNNER_TEMP/deploy.log" 2>&1
+          rc=$?
+          set -e
+          grep -E '^==>|REFUSED|FAILED|built [0-9]+ URLs|live sitemap|added|removed' "$RUNNER_TEMP/deploy.log" | grep -v -i 'http' || true
+          echo "exit $rc"
+          exit $rc
+
+      - name: Push today's data back
+        id: push-data
+        if: steps.deploy.outcome == 'success'
+        working-directory: code
+        run: |
+          git config user.name "flixshows-sync"
+          git config user.email "sync@flixshows.me"
+          git add data/catalog.json data/subs.json.gz data/first_seen.json data/kisskh_seg_hosts.json 2>/dev/null || true
+          git commit -q -m "Daily sync $(date -u +%F): new titles and episodes from the source" -m "[skip ci]"
+          for i in 1 2 3; do
+            git pull -q --rebase origin main && git push -q origin HEAD:main && exit 0
+            sleep 10
+          done
+          exit 1
+
+      - name: Report
+        if: always()
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: python scripts/report.py --suite "Daily sync"
