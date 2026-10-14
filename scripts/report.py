@@ -63,6 +63,9 @@ HINTS = {
             "was added today (the step prints counts; the cause is in the job's own log)",
     "deploy": "the daily sync built today's additions but deploy.sh refused or failed, so "
               "nothing new is live and nothing was pushed; tomorrow's run redoes the day",
+    "indexnow": "today's pages are live but IndexNow refused or failed (key file not "
+                "live, or the sitemap read was cut short); nothing was recorded, so the "
+                "next run sends them",
     "push-data": "today's additions are LIVE but could not be pushed back to "
                  "akv2011/stream-site; push before the next hand deploy or it reverts them",
 }

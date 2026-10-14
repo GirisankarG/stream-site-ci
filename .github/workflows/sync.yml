@@ -122,6 +122,17 @@ jobs:
           echo "exit $rc"
           exit $rc
 
+      # After the deploy, never before: IndexNow says "come and look now".
+      # The script refuses on its own (key file not live, sitemap cut short),
+      # submits only URLs it has not sent before, and records them in a
+      # tracked file that is pushed with the data.
+      - name: Tell IndexNow about today's pages
+        id: indexnow
+        if: steps.deploy.outcome == 'success'
+        continue-on-error: true
+        working-directory: code
+        run: python scripts/indexnow.py 2>&1 | grep -v -i 'http' || true
+
       - name: Push today's data back
         id: push-data
         if: steps.deploy.outcome == 'success'
@@ -129,7 +140,7 @@ jobs:
         run: |
           git config user.name "flixshows-sync"
           git config user.email "sync@flixshows.me"
-          git add -u -- data/
+          git add -u -- data/ docs/indexing/
           git commit -q -m "Daily sync $(date -u +%F): new titles and episodes from the source" -m "[skip ci]"
           for i in 1 2 3; do
             git pull -q --rebase origin main && git push -q origin HEAD:main && exit 0
