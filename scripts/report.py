@@ -59,6 +59,12 @@ HINTS = {
     "crawl": "the source did not answer this runner, which is what a datacenter IP being "
              "walled looks like. Not measured: this is NOT 'no new titles'",
     "discover": "discovery could not compare the source with the site",
+    "sync": "the daily sync could not list, fetch or harvest the source, so nothing new "
+            "was added today (the step prints counts; the cause is in the job's own log)",
+    "deploy": "the daily sync built today's additions but deploy.sh refused or failed, so "
+              "nothing new is live and nothing was pushed; tomorrow's run redoes the day",
+    "push-data": "today's additions are LIVE but could not be pushed back to "
+                 "akv2011/stream-site; push before the next hand deploy or it reverts them",
 }
 
 
