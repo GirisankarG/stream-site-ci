@@ -14,7 +14,12 @@ name: sync
 
 on:
   schedule:
+    # Morning and evening IST. Korean and Chinese dramas air around 12:00-13:30
+    # UTC and the source posts them within hours, so the evening run lands them
+    # the same day instead of the next morning. Minutes are free here (public
+    # repo) and a pages deploy costs nothing.
     - cron: '35 3 * * *'
+    - cron: '35 15 * * *'
   workflow_dispatch:
 
 permissions:
