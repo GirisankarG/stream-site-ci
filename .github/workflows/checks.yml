@@ -41,13 +41,13 @@ jobs:
       - name: Refuse to start without the secrets
         id: require-secrets
         env:
-          CODE_REPO_PAT: ${{ secrets.CODE_REPO_PAT }}
+          PRIVATE_REPO_DEPLOY_KEY: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
           ALERT_FROM: ${{ secrets.ALERT_FROM }}
         run: |
           missing=""
-          for v in CODE_REPO_PAT RESEND_API_KEY ALERT_EMAIL ALERT_FROM; do
+          for v in PRIVATE_REPO_DEPLOY_KEY RESEND_API_KEY ALERT_EMAIL ALERT_FROM; do
             [ -z "${!v}" ] && missing="$missing $v"
           done
           echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
@@ -62,7 +62,10 @@ jobs:
         with:
           repository: akv2011/stream-site
           ref: main
-          token: ${{ secrets.CODE_REPO_PAT }}
+          # Read-only deploy key `flixshows-ci` on akv2011/stream-site. Replaced
+          # CODE_REPO_PAT, which was never created, so these runs never reached
+          # the code; sync.yml and backfill.yml already check out this way.
+          ssh-key: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
           path: code
 
       - uses: actions/setup-python@v5

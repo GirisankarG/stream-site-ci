@@ -54,7 +54,7 @@ def test_missing_summary_names_the_step_that_failed(tmp_path, monkeypatch, capsy
                                       "--suite", "Live site", "--dry-run"])
     assert R.main() == 1
     out = capsys.readouterr().out
-    assert "CODE_REPO_PAT" in out, "the mail must say what to do, not just 'failure'"
+    assert "PRIVATE_REPO_DEPLOY_KEY" in out, "the mail must say what to do, not just 'failure'"
 
 
 def test_step_only_mode_green_when_every_step_passed(monkeypatch):
@@ -84,14 +84,14 @@ def test_no_step_outcomes_at_all_is_not_green(monkeypatch):
 def test_missing_secrets_are_named_and_skips_do_not_bury_the_cause(monkeypatch, capsys):
     """What every one of the ten dead runs should have mailed."""
     monkeypatch.setenv("STEPS_JSON", json.dumps({
-        "require-secrets": {"outcome": "failure", "outputs": {"missing": "CODE_REPO_PAT ALERT_FROM"}},
+        "require-secrets": {"outcome": "failure", "outputs": {"missing": "PRIVATE_REPO_DEPLOY_KEY ALERT_FROM"}},
         "checkout-code": {"outcome": "skipped"}, "install": {"outcome": "skipped"},
         "build": {"outcome": "skipped"}, "verify": {"outcome": "skipped"}}))
     monkeypatch.setattr(sys, "argv", ["report.py", "--suite", "Build checks", "--dry-run"])
     assert R.main() == 1
     out = capsys.readouterr().out
     subject = [l for l in out.splitlines() if l.startswith("[report] subject:")][0]
-    assert "require-secrets: failure, not set: CODE_REPO_PAT ALERT_FROM" in subject
+    assert "require-secrets: failure, not set: PRIVATE_REPO_DEPLOY_KEY ALERT_FROM" in subject
     assert subject.endswith("(+1 more)"), "four skips must collapse into one line"
 
 
