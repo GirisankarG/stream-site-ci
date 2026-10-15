@@ -138,7 +138,9 @@ EP_AFTER_JS = """() => { const rows = [...document.querySelectorAll('#epanel .ep
           generic_names: rows.filter(r => /^Episode \\d+$/.test(name(r))).length,
           no_name: rows.filter(r => !r.querySelector('.ept')).length,
           no_runtime: rows.filter(r => !r.querySelector('.epr')).length,
-          watching: document.querySelectorAll('.ep[aria-pressed=true] .now').length}; }"""
+          watching: document.querySelectorAll('#epanel .ep[aria-pressed=true] .now').length,
+          watching_side: document.getElementById('eps2')
+            ? document.querySelectorAll('#eps2 .ep[aria-pressed=true] .now').length : null}; }"""
 
 PEEK_JS = """() => { const c = document.querySelector('.card.peek'); if (!c) return null;
   const im = c.querySelector('.art img.bd');
@@ -358,8 +360,15 @@ def judge(m: dict) -> list[str]:
                          "known to carry names")
             if ea.get("no_runtime"):
                 P.append(f"{ea['no_runtime']} of {ea['rows']} episode rows have no runtime")
+            # PER LIST, since 2026-10-11 (d2dd4cd): one builder draws the episode
+            # list twice, in the panel over the player and in the side column on a
+            # wide screen. Each must mark exactly one episode. Counting the whole
+            # document read 2 on a correct page and held this red for five days.
             if ea.get("watching") != 1:
                 P.append(f"the episode panel shows {ea.get('watching')} WATCHING marks, not exactly 1")
+            if ea.get("watching_side") not in (None, 1):
+                P.append(f"the side episode list shows {ea.get('watching_side')} WATCHING marks, "
+                         "not exactly 1, so it disagrees with the panel")
     return P
 
 
