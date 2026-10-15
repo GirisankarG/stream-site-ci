@@ -80,6 +80,10 @@ jobs:
         run: |
           pip install --quiet -r requirements.txt
           python -m playwright install --with-deps chromium
+          # behaviour_test.py renders a test clip with ffmpeg, which the runner
+          # image does not ship. Missed until 10-15 because no run had ever
+          # reached Behaviour: the checkout failed first.
+          sudo apt-get install -y -qq ffmpeg >/dev/null
 
       # Cheapest gate first: a file that does not parse fails in seconds.
       - name: Python syntax

@@ -76,7 +76,8 @@ jobs:
         id: tests
         run: |
           python -m pytest tests/test_digest.py -q
-          (cd code && python -m pytest scripts/test_stream_liveness.py -q)
+          # Own case() runner, not pytest: pytest collects nothing and exits 5.
+          (cd code && python scripts/test_stream_liveness.py)
 
       - uses: actions/cache/restore@v4
         with:
