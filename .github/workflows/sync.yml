@@ -114,7 +114,9 @@ jobs:
           bash deploy.sh > "$RUNNER_TEMP/deploy.log" 2>&1
           rc=$?
           set -e
-          grep -E '^==>|REFUSED|FAILED|WRONG|have:|want:|built [0-9]+ URLs|live sitemap|added|removed' "$RUNNER_TEMP/deploy.log" | grep -v -i 'http' || true
+          # Every guard line, URLs blanked rather than the line dropped: dropping
+          # them hid the one error that failed the deploy (2026-10-15).
+          grep -E '^==>|REFUSED|FAILED|WRONG|have:|want:|built [0-9]+ URLs|live sitemap|added|removed|error|Error|^    [^ ]' "$RUNNER_TEMP/deploy.log" | sed -E 's#https?://[^ ]*#<url>#g' | tail -60 || true
           echo "exit $rc"
           exit $rc
 
