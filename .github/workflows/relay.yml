@@ -76,7 +76,9 @@ jobs:
       - name: Prove the checker still fires
         id: tests
         working-directory: code
-        run: python -m pytest scripts/test_relay_check.py -q
+        # A script with its own case() runner, not a pytest module: pytest collects
+        # nothing and exits 5, which failed every run that reached this step.
+        run: python scripts/test_relay_check.py
 
       - name: Sign, fetch and judge a real stream
         id: relay
