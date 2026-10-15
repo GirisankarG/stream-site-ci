@@ -1,0 +1,106 @@
+name: Leak scan
+
+# No source site or host in anything people read (MS_Normal's gap #7): this
+# repo's files and new commit messages, and the visible text, page source and
+# served JS of 130 random live pages. akv2011/stream-site's scripts/leak_scan.py
+# derives the names from the private code on each run, masks every one before
+# printing, and reports where a name appears, never the name.
+#
+# BASELINE: commit messages before it are not scanned. One there (882e8b3,
+# 2026-09-24) names the source and only a rewrite of this public history can
+# remove it, which is Arun's decision. Leave the baseline alone; moving it
+# forward would stop scanning commits nobody has looked at.
+
+on:
+  schedule:
+    - cron: '41 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: leak-scan
+  cancel-in-progress: false
+
+env:
+  BASELINE: 893df0c10e2009a7836579b44b57e42780158baf
+
+jobs:
+  leak-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0       # every commit after BASELINE
+
+      - name: Refuse to start without the secrets
+        id: require-secrets
+        env:
+          PRIVATE_REPO_DEPLOY_KEY: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: |
+          missing=""
+          for v in PRIVATE_REPO_DEPLOY_KEY RESEND_API_KEY ALERT_EMAIL ALERT_FROM; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+          if [ -n "$missing" ]; then
+            echo "::error::not set on this repository:$missing"
+            exit 1
+          fi
+
+      - name: Check out akv2011/stream-site
+        id: checkout-code
+        uses: actions/checkout@v4
+        with:
+          repository: akv2011/stream-site
+          ref: main
+          ssh-key: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          path: code
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        id: install
+        run: pip install --quiet httpx
+
+      - name: Prove the scanner still fires
+        id: tests
+        working-directory: code
+        env:
+          PUBLIC_REPO: ${{ github.workspace }}
+        run: python scripts/test_leak_scan.py
+
+      - name: Scan for the source's name
+        id: scan
+        if: steps.tests.outcome == 'success'
+        working-directory: code
+        run: python scripts/leak_scan.py --public-repo "$GITHUB_WORKSPACE" --baseline "$BASELINE" --summary "$GITHUB_WORKSPACE/summary.json"
+
+      - uses: actions/cache/restore@v4
+        if: always()
+        with:
+          path: mailstate
+          key: leak-scan-mail-${{ github.run_id }}
+          restore-keys: leak-scan-mail-
+
+      - name: Report
+        if: always()
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: python scripts/report.py --summary summary.json --suite "Leak scan" --state mailstate/mail.json
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: mailstate
+          key: leak-scan-mail-${{ github.run_id }}
