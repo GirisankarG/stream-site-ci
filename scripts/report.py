@@ -47,8 +47,9 @@ SITE = "https://flixshows.me"   # in every body: first question is "the site, or
 HINTS = {
     "require-secrets": "repository secrets are missing on GirisankarG/stream-site-ci "
                        "(Settings > Secrets and variables > Actions), so nothing ran",
-    "checkout-code": "could not check out akv2011/stream-site: the CODE_REPO_PAT secret "
-                     "is missing, expired, or lacks Contents: read on that repo. Nothing ran.",
+    "checkout-code": "could not check out akv2011/stream-site: the PRIVATE_REPO_DEPLOY_KEY "
+                     "secret is missing, or the flixshows-ci deploy key was removed from that "
+                     "repo. Nothing ran.",
     "tests": "the checker's own mutation tests failed, so its detectors cannot be trusted "
              "and the live check was not run",
     "install": "dependency install failed, nothing was checked",
