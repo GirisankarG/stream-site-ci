@@ -57,9 +57,10 @@ WATCHED = {
     # 2026-10-15 with 2 scheduled runs on record; re-measure the real gaps
     # once ~30 exist and tighten if delivery proves reliable.
     "sync.yml": ("New titles, new episodes, their streams and subtitles", 36),
+    "data-health.yml": ("Measure what the sync wrote", 50),
 }
 KEEPALIVE = ["live-check.yml", "checks.yml", "live-behaviour.yml", "relay.yml",
-             "stream-liveness.yml", "sync.yml", "watchdog.yml"]
+             "stream-liveness.yml", "sync.yml", "data-health.yml", "watchdog.yml"]
 
 
 def api(method: str, path: str) -> tuple[int, object]:

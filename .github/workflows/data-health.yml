@@ -1,0 +1,106 @@
+name: Data health
+
+# Judges what the sync wrote, after it wrote it (scripts/data_health.py in
+# akv2011/stream-site): the upcoming-episode backlog, first-seen dates, and the
+# relay Worker's requests against the Workers Free cap. Each can go wrong with
+# every sync step green (MS_Normal's gaps #8 to #10, 2026-10-16).
+#
+# Runs after the morning sync (03:35 UTC). History is read from git, every
+# sync commits the catalogue, so the checkout keeps full history but fetches
+# blobs on demand: only the few catalogue versions compared are downloaded.
+
+on:
+  schedule:
+    - cron: '13 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: data-health
+  cancel-in-progress: false
+
+jobs:
+  data-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to start without the secrets
+        id: require-secrets
+        env:
+          PRIVATE_REPO_DEPLOY_KEY: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: |
+          missing=""
+          for v in PRIVATE_REPO_DEPLOY_KEY CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID RESEND_API_KEY ALERT_EMAIL ALERT_FROM; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+          if [ -n "$missing" ]; then
+            echo "::error::not set on this repository:$missing"
+            exit 1
+          fi
+
+      - name: Check out akv2011/stream-site
+        id: checkout-code
+        uses: actions/checkout@v4
+        with:
+          repository: akv2011/stream-site
+          ref: main
+          ssh-key: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          path: code
+          # Full history, blobs on demand: the trend is read from past syncs'
+          # commits, and the catalogue is 47 MB a version.
+          fetch-depth: 0
+          filter: blob:none
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        id: install
+        run: pip install --quiet httpx
+
+      - name: Prove the checker still fires
+        id: tests
+        working-directory: code
+        run: python scripts/test_data_health.py
+
+      - name: Measure what the sync wrote
+        id: measure
+        if: steps.tests.outcome == 'success'
+        working-directory: code
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python scripts/data_health.py --summary "$GITHUB_WORKSPACE/summary.json"
+
+      - uses: actions/cache/restore@v4
+        if: always()
+        with:
+          path: mailstate
+          key: data-health-mail-${{ github.run_id }}
+          restore-keys: data-health-mail-
+
+      - name: Report
+        if: always()
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: python scripts/report.py --summary summary.json --suite "Data health" --state mailstate/mail.json
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: mailstate
+          key: data-health-mail-${{ github.run_id }}
