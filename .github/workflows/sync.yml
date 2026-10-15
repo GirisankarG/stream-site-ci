@@ -159,14 +159,18 @@ jobs:
         if: steps.push-data.outcome == 'success'
         continue-on-error: true
         working-directory: code
+        # The ledger is pushed even when some batches were refused: the script
+        # records only the accepted ones, and dropping them would resend them
+        # every run (the episode sitemaps put ~199k URLs in one go, 2026-10-16).
         run: |
           set -o pipefail
-          python scripts/indexnow.py 2>&1 | sed -E 's#https?://[^ ]*#<url>#g'
+          rc=0
+          python scripts/indexnow.py 2>&1 | sed -E 's#https?://[^ ]*#<url>#g' || rc=$?
           git add -u -- docs/indexing/
-          git diff --cached --quiet && exit 0
+          git diff --cached --quiet && exit $rc
           git commit -q -m "IndexNow ledger after the daily sync" -m "[skip ci]"
           for i in 1 2 3; do
-            git pull -q --rebase origin main && git push -q origin HEAD:main && exit 0
+            git pull -q --rebase origin main && git push -q origin HEAD:main && exit $rc
             sleep 10
           done
           exit 1
