@@ -1,0 +1,113 @@
+name: Play check
+
+# Presses play in our own player, in real Chrome, on four real episodes (an
+# open stream, a relayed one, one on the host that answers 500, and one gone
+# at the source) and judges the outcome from the player's own state hook,
+# window.__flixPlayer. akv2011/stream-site's scripts/play_check.py; the
+# cases and what each must do are in its docstring (MS_Normal's gap #6).
+#
+# After the morning sync's deploy (03:35 UTC), so it judges the player viewers
+# have that day. Dispatch with player=main to judge main's player.js on the
+# live pages before it is deployed.
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      player:
+        description: "deployed: the live player. main: main's player.js on the live pages"
+        type: choice
+        options: [deployed, main]
+        default: deployed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: play-check
+  cancel-in-progress: false
+
+jobs:
+  play:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to start without the secrets
+        id: require-secrets
+        env:
+          PRIVATE_REPO_DEPLOY_KEY: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: |
+          missing=""
+          for v in PRIVATE_REPO_DEPLOY_KEY RESEND_API_KEY ALERT_EMAIL ALERT_FROM; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+          if [ -n "$missing" ]; then
+            echo "::error::not set on this repository:$missing"
+            exit 1
+          fi
+
+      - name: Check out akv2011/stream-site
+        id: checkout-code
+        uses: actions/checkout@v4
+        with:
+          repository: akv2011/stream-site
+          ref: main
+          ssh-key: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
+          path: code
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        id: install
+        # Real Chrome, which the runner image ships: Playwright's Chromium
+        # cannot decode H.264, and every stream here is H.264.
+        run: |
+          pip install --quiet httpx playwright
+          google-chrome --version || python -m playwright install --with-deps chrome
+
+      - name: Prove the judge still fires
+        id: tests
+        working-directory: code
+        run: python scripts/test_play_check.py
+
+      - name: Press play in our own player
+        id: play
+        if: steps.tests.outcome == 'success'
+        working-directory: code
+        env:
+          PLAYER: ${{ inputs.player || 'deployed' }}
+        run: |
+          extra=""
+          [ "$PLAYER" = "main" ] && extra="--player-js site/static/js/player.js"
+          python scripts/play_check.py $extra --summary "$GITHUB_WORKSPACE/summary.json"
+
+      - uses: actions/cache/restore@v4
+        if: always()
+        with:
+          path: mailstate
+          key: play-check-mail-${{ github.run_id }}
+          restore-keys: play-check-mail-
+
+      - name: Report
+        if: always()
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: python scripts/report.py --summary summary.json --suite "Play check" --state mailstate/mail.json
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: mailstate
+          key: play-check-mail-${{ github.run_id }}
