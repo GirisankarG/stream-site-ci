@@ -29,7 +29,7 @@ LIVE = {"home_title": "FlixShows - Find it. Press play.", "watch_title": "Iron M
         "home_hidden_visible": [], "watch_hidden_visible": [], "series_hidden_visible": [],
         "ep_before": {"epanel_hidden": True, "epopen_expanded": "false", "epq": True, "srcs_open": False},
         "ep_after": {"epanel_hidden": False, "rows": 7, "generic_names": 0, "no_name": 0,
-                     "no_runtime": 0, "watching": 1}}
+                     "no_runtime": 0, "watching": 1, "watching_side": 1}}
 
 
 def m(**over):
@@ -180,6 +180,21 @@ def test_panel_that_does_not_open_fires():
 def test_watching_mark_must_be_exactly_one():
     after = {**LIVE["ep_after"], "watching": 0}
     assert any("WATCHING" in p for p in B.judge(m(ep_after=after)))
+
+
+def test_one_mark_in_each_of_the_two_lists_is_clean():
+    """The 10-11 to 10-16 false alarm: panel and side column each mark one episode."""
+    assert not any("WATCHING" in p for p in B.judge(m()))
+
+
+def test_the_side_list_disagreeing_fires():
+    after = {**LIVE["ep_after"], "watching_side": 2}
+    assert any("side episode list" in p for p in B.judge(m(ep_after=after)))
+
+
+def test_no_side_list_on_a_narrow_screen_is_clean():
+    after = {**LIVE["ep_after"], "watching_side": None}
+    assert not any("side episode list" in p for p in B.judge(m(ep_after=after)))
 
 
 def test_series_page_error_fires():
