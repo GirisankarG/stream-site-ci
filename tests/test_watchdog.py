@@ -70,3 +70,18 @@ def test_workflow_state_is_read_before_the_keepalive(monkeypatch, tmp_path):
     gets = [i for i, c in enumerate(calls) if c == ("GET", "/actions/workflows/live-check.yml")]
     puts = [i for i, c in enumerate(calls) if c == ("PUT", "/actions/workflows/live-check.yml/enable")]
     assert gets and puts and gets[0] < puts[0], "state must be read BEFORE re-enabling hides it"
+
+
+def test_every_watched_step_exists_in_its_workflow():
+    """A misspelt step reads as 'never reached' on every run, forever."""
+    import re
+    from pathlib import Path
+    wf_dir = Path(__file__).resolve().parent.parent / ".github" / "workflows"
+    for wf, (step, _limit) in W.WATCHED.items():
+        names = re.findall(r"^\s*- name:\s*(.+?)\s*$", (wf_dir / wf).read_text(), re.M)
+        assert step in names, f"{wf} has no step named {step!r}"
+
+
+def test_every_watched_workflow_is_kept_alive():
+    """A watched schedule GitHub disables after 60 days is the failure watched for."""
+    assert set(W.WATCHED) <= set(W.KEEPALIVE)

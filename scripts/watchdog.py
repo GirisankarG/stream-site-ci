@@ -48,9 +48,18 @@ WATCHED = {
     "live-behaviour.yml": ("Check the live behaviour", 50),
     "relay.yml": ("Sign, fetch and judge a real stream", 8),
     "stream-liveness.yml": ("Sample published streams by host", 50),
+    # The sync pushes to the PRIVATE repo, so it leaves no activity here and
+    # GitHub's 60-day rule can switch its schedule off with nobody told: it is
+    # the one workflow whose silence means no new titles or episodes reach the
+    # site. Cron 03:35 and 15:35 UTC; 36h is three slots, so one missed run is
+    # not an alarm and two are.
+    # ponytail: 36h is from the schedule, not delivery. Twice-daily started
+    # 2026-10-15 with 2 scheduled runs on record; re-measure the real gaps
+    # once ~30 exist and tighten if delivery proves reliable.
+    "sync.yml": ("New titles, new episodes, their streams and subtitles", 36),
 }
 KEEPALIVE = ["live-check.yml", "checks.yml", "live-behaviour.yml", "relay.yml",
-             "stream-liveness.yml", "watchdog.yml"]
+             "stream-liveness.yml", "sync.yml", "watchdog.yml"]
 
 
 def api(method: str, path: str) -> tuple[int, object]:
