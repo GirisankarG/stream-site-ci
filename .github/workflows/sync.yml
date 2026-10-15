@@ -166,6 +166,21 @@ jobs:
           done
           exit 1
 
+      # Arun asked to hear the day more room is needed, not the day a deploy is
+      # refused: free Pages allows 20,000 files per site and deploy.sh refuses
+      # past it. A failure here only mails (report.py, hint "room"); today's
+      # pages are already live and pushed.
+      - name: Room left under the Pages cap
+        id: room
+        if: steps.deploy.outcome == 'success'
+        continue-on-error: true
+        working-directory: code
+        run: |
+          n=$(find dist -type f | wc -l | tr -d ' ')
+          imgs=$(python -c 'import json; print(len(json.load(open("data/img_index.json"))))')
+          echo "pages project: $n of 20000 files; image project: $imgs of 20000"
+          [ "$n" -lt 19000 ]
+
       - name: Report
         if: always()
         env:

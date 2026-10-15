@@ -66,6 +66,9 @@ HINTS = {
     "indexnow": "today's pages are live but IndexNow refused or failed (key file not "
                 "live, or the sitemap read was cut short); nothing was recorded, so the "
                 "next run sends them",
+    "room": "QUESTION for Arun: the pages project holds over 19,000 of the 20,000 files "
+            "free Pages allows, and deploys stop at the cap. Decide: Pages paid plan "
+            "(100,000 files per site) or a second free project. Today's deploy is live",
     "push-data": "today's additions are LIVE but could not be pushed back to "
                  "akv2011/stream-site; push before the next hand deploy or it reverts them",
 }
