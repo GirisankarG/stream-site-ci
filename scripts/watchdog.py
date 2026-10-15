@@ -58,9 +58,11 @@ WATCHED = {
     # once ~30 exist and tighten if delivery proves reliable.
     "sync.yml": ("New titles, new episodes, their streams and subtitles", 36),
     "data-health.yml": ("Measure what the sync wrote", 50),
+    "leak-scan.yml": ("Scan for the source's name", 50),
 }
 KEEPALIVE = ["live-check.yml", "checks.yml", "live-behaviour.yml", "relay.yml",
-             "stream-liveness.yml", "sync.yml", "data-health.yml", "watchdog.yml"]
+             "stream-liveness.yml", "sync.yml", "data-health.yml",
+             "leak-scan.yml", "watchdog.yml"]
 
 
 def api(method: str, path: str) -> tuple[int, object]:
