@@ -64,9 +64,9 @@ HINTS = {
             "was added today (the step prints counts; the cause is in the job's own log)",
     "deploy": "the daily sync built today's additions but deploy.sh refused or failed, so "
               "nothing new is live and nothing was pushed; tomorrow's run redoes the day",
-    "indexnow": "today's pages are live but IndexNow refused or failed (key file not "
-                "live, or the sitemap read was cut short); nothing was recorded, so the "
-                "next run sends them",
+    "indexnow": "today's pages are live but IndexNow refused some or all of them (key "
+                "file not live, a sitemap cut short, or batches rate-limited); accepted "
+                "batches are recorded, the rest go with the next run",
     "room": "QUESTION for Arun: the pages project holds over 19,000 of the 20,000 files "
             "free Pages allows, and deploys stop at the cap. Decide: Pages paid plan "
             "(100,000 files per site) or a second free project. Today's deploy is live",
