@@ -276,10 +276,15 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
         if h1s != 1:
             P.append(f"the homepage has {h1s} h1 elements, not exactly 1")
 
-    # 2) robots.txt declares exactly the committed sitemap set.
+    # 2) robots.txt declares exactly the committed sitemap set, plus the
+    # episode sitemaps: the build splits those at 45,000 URLs, so their number
+    # grows on its own. Numbered from 1 with no gap, never fewer than committed.
     rb = fetch(site + "/robots.txt")
     declared = set(_SITEMAP_DECL.findall(rb.body)) if rb.status == 200 else set()
-    want = set(b["sitemaps"])
+    ep_re = re.compile(re.escape(site) + r"/sitemap-episodes-(\d+)\.xml")
+    n_ep = max(b["episode_sitemaps_min"], sum(1 for s in declared if ep_re.fullmatch(s)))
+    episode_maps = [f"{site}/sitemap-episodes-{i}.xml" for i in range(1, n_ep + 1)]
+    want = set(b["sitemaps"]) | set(episode_maps)
     M["robots_status"] = rb.status
     if rb.status != 200:
         P.append(f"robots.txt: HTTP {rb.status} {rb.error}".strip())
@@ -287,25 +292,34 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
         P.append(f"robots.txt sitemap declarations wrong: missing {sorted(want - declared)}, "
                  f"unexpected {sorted(declared - want)}")
 
-    # 3) Sitemap: well-formed, within the committed band, every loc clean.
+    # 3) Sitemaps: well-formed, within the committed band, every loc clean.
+    # The floors are per group, or 199,496 episode URLs would hide a collapsed
+    # title sitemap; the protocol limit is per file.
     locs: list[str] = []
-    for sm in b["sitemaps"]:
-        r = fetch(sm)
-        if r.status != 200:
-            P.append(f"{sm}: HTTP {r.status} {r.error}".strip())
-            continue
-        if "<sitemapindex" in r.body[:2000]:
-            # Not silently mis-counted: the checker must be taught the index.
-            P.append(f"{sm} became a sitemap INDEX; this checker counts urlset locs only and "
-                     "must be updated before its counts mean anything")
-            continue
-        locs += _LOC.findall(r.body)
-    M["sitemap_locs"] = len(locs)
-    if len(locs) < b["sitemap_min_locs"]:
-        P.append(f"sitemap holds {len(locs)} URLs, under the committed floor of "
-                 f"{b['sitemap_min_locs']}: a collapsed or partial deploy")
-    if len(locs) > b["sitemap_max_locs"]:
-        P.append(f"sitemap holds {len(locs)} URLs, over the {b['sitemap_max_locs']} protocol limit")
+    for group, maps, floor in (("sitemap", b["sitemaps"], b["sitemap_min_locs"]),
+                               ("episode sitemaps", episode_maps, b["episode_sitemap_min_locs"])):
+        n = 0
+        for sm in maps:
+            r = fetch(sm)
+            if r.status != 200:
+                P.append(f"{sm}: HTTP {r.status} {r.error}".strip())
+                continue
+            if "<sitemapindex" in r.body[:2000]:
+                # Not silently mis-counted: the checker must be taught the index.
+                P.append(f"{sm} became a sitemap INDEX; this checker counts urlset locs only and "
+                         "must be updated before its counts mean anything")
+                continue
+            if "</urlset>" not in r.body[-200:]:
+                P.append(f"{sm}: no closing </urlset>, cut short in serving or in this read")
+            got = _LOC.findall(r.body)
+            if len(got) > b["sitemap_max_locs"]:
+                P.append(f"{sm} holds {len(got)} URLs, over the {b['sitemap_max_locs']} protocol limit")
+            n += len(got)
+            locs += got
+        M[f"{group.replace(' ', '_')}_locs"] = n
+        if n < floor:
+            P.append(f"{group}: {n} URLs, under the committed floor of {floor}: "
+                     "a collapsed or partial deploy")
     clean = re.compile(rf"^{re.escape(site)}(/\S*)?$")
     bad = [u for u in locs if not clean.match(u)]
     html_suffix = [u for u in locs if urllib.parse.urlsplit(u).path.endswith(".html")]
