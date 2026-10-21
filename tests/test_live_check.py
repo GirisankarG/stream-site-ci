@@ -344,3 +344,22 @@ def test_one_file_over_the_protocol_limit_fires(monkeypatch):
     monkeypatch.setitem(B, "sitemap_max_locs", 3)
     probs, _ = _sitemaps(monkeypatch, [1, 2], ep_locs=4)
     assert any("sitemap-episodes-1.xml holds 4 URLs, over the 3 protocol limit" in p for p in probs)
+
+
+def test_an_episode_number_the_series_lacks_must_be_a_404(monkeypatch):
+    """worker/episode renders any number its route matches unless it checks the
+    season's count, and that soft 200 is invisible to a probe like ci-probe-N."""
+    site = B["site"].rstrip("/")
+    ep = lambda n: f"{site}/episode/show-2020-season-1-episode-{n}"
+    routes = {f"{site}/robots.txt": L.Resp(200, "u", {}, f"Sitemap: {site}/sitemap-episodes-1.xml"),
+              f"{site}/sitemap-episodes-1.xml": L.Resp(200, "u", {},
+                  f"<urlset><loc>{ep(1)}</loc><loc>{ep(2)}</loc></urlset>")}
+    nf = L.Resp(404, "u", {}, "<title>Page not found - FlixShows</title>")
+    page = lambda u: L.Resp(200, u, {}, f'<title>Show - FlixShows</title><link rel="canonical" href="{u}">')
+    b = {**B, "sitemaps": [], "sitemap_min_locs": 0, "episode_sitemaps_min": 1, "episode_sitemap_min_locs": 2}
+    for checks_count in (False, True):
+        real = lambda u: "-episode-" in u and not (checks_count and u.endswith("-99999"))
+        monkeypatch.setattr(L, "fetch", lambda u: routes.get(u) or (page(u) if real(u) else nf))
+        probs, _ = L.run(b, random.Random(1))
+        soft = [p for p in probs if p.startswith(ep(99999) + ": a nonexistent URL returned HTTP 200")]
+        assert bool(soft) is not checks_count, probs
