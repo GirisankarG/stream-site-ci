@@ -391,6 +391,10 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
     token = f"ci-probe-{rng.randrange(10**8)}"
     probes = [f"{site}/{token}"] + [f"{site}/{seg}/{token}" for seg in M["sampled_types"]
                                     if seg != "(root)"]
+    # A real series with an episode it does not have: the Worker renders any
+    # number the route matches unless it checks the season's count.
+    probes += [re.sub(r"-episode-\d+$", "-episode-99999", u)
+               for u in sample if "/episode/" in u][:1]
     for u in probes:
         P += judge_404(u, fetch(u), b, home_title)
     M["not_found_probes"] = len(probes)
