@@ -67,6 +67,8 @@ HINTS = {
     "indexnow": "today's pages are live but IndexNow refused some or all of them (key "
                 "file not live, a sitemap cut short, or batches rate-limited); accepted "
                 "batches are recorded, the rest go with the next run",
+    "bing": "Bing's daily URL quota was not spent or its ledger not pushed; IndexNow "
+            "already covers every URL and the next run picks up where the ledger stops",
     "room": "QUESTION for Arun: the pages project holds over 19,000 of the 20,000 files "
             "free Pages allows, and deploys stop at the cap. Decide: Pages paid plan "
             "(100,000 files per site) or a second free project. Today's deploy is live",

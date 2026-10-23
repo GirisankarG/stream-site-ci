@@ -175,6 +175,35 @@ jobs:
           done
           exit 1
 
+      # Bing's second, quota-limited signal: 100 URLs a day, Korean and Chinese
+      # drama hubs and their titles first (Arun, 2026-10-23). Every run, not
+      # only on shipping days: the quota is daily and reads 0 once spent, so the
+      # second run of the day sends nothing. Pulls first, because a hand run
+      # may have sent today's 100 and recorded them in the ledger.
+      - name: Spend today's Bing URL quota
+        id: bing
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        working-directory: code
+        env:
+          BING_API_KEY: ${{ secrets.BING_API_KEY }}
+        run: |
+          [ -n "$BING_API_KEY" ] || { echo "no BING_API_KEY secret, skipped"; exit 0; }
+          set -o pipefail
+          git config user.name "flixshows-sync"
+          git config user.email "sync@flixshows.me"
+          git pull -q --rebase --autostash origin main
+          rc=0
+          python scripts/bing_submit.py 2>&1 | sed -E 's#https?://[^ ]*#<url>#g' || rc=$?
+          git add -- docs/indexing/bing-submitted.tsv
+          git diff --cached --quiet && exit $rc
+          git commit -q -m "Bing ledger after the daily sync" -m "[skip ci]"
+          for i in 1 2 3; do
+            git pull -q --rebase --autostash origin main && git push -q origin HEAD:main && exit $rc
+            sleep 10
+          done
+          exit 1
+
       # Arun asked to hear the day more room is needed, not the day a deploy is
       # refused: free Pages allows 20,000 files per site and deploy.sh refuses
       # past it. A failure here only mails (report.py, hint "room"); today's
