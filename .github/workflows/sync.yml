@@ -133,6 +133,10 @@ jobs:
           git config user.name "flixshows-sync"
           git config user.email "sync@flixshows.me"
           git add -u -- data/
+          # The build's own sidecar, like first_seen.json. Until a copy is on
+          # main it is untracked and -u skips it, so every run would restamp
+          # every title's date (2026-10-27).
+          [ ! -f data/title_updated.json ] || git add -- data/title_updated.json
           git commit -q -m "Daily sync $(date -u +%F): new titles and episodes from the source" -m "[skip ci]"
           for i in 1 2 3; do
             git pull -q --rebase origin main && git push -q origin HEAD:main && exit 0
