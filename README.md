@@ -84,9 +84,9 @@ variables > Actions:
 | Secret | Value |
 |---|---|
 | `PRIVATE_REPO_DEPLOY_KEY` | read-only deploy key `flixshows-ci` on `akv2011/stream-site` (replaced `CODE_REPO_PAT`, never created) |
-| `RESEND_API_KEY` | the Resend key already used by manhwa-reader |
-| `ALERT_EMAIL` | where alerts go |
-| `ALERT_FROM` | a sender on a domain verified in Resend, e.g. `FlixShows CI <sync@specterscans.com>` |
+| `RESEND_API_KEY` | the CI Resend account's sending-only key (since 2026-10-26; before that the key manhwa-reader uses) |
+| `ALERT_EMAIL` | where alerts go: the CI Resend account's own address, the only one it can mail (it has no verified domain) |
+| `ALERT_FROM` | `CI alerts <onboarding@resend.dev>`; Resend sends from that address only, until a domain is verified in the account |
 | `TMDB_API_KEY` | for `discovery.yml` only |
 | `PROXY_SECRET` | for `relay.yml` only: the relay's signing secret, from `stream-site/.env` |
 
