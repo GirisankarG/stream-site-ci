@@ -90,7 +90,7 @@ jobs:
           python -u scripts/sync/daily.py --work "$RUNNER_TEMP/sync" --state ../state/seen.json > "$RUNNER_TEMP/sync.log" 2>&1
           rc=$?
           set -e
-          grep -E '^(FAILED|listing|new titles|  [0-9]+ unchanged|details|stream lookups|subtitle lookups|incremental|  refreshed|  entries|  episodes   |  harvested streams|  episodes gone)' "$RUNNER_TEMP/sync.log" || true
+          grep -E '^(FAILED|listing|new titles|  [0-9]+ unchanged|details|stream lookups|subtitle lookups|incremental|  refreshed|  entries|  episodes   |  harvested streams|  episodes gone|hosts rechecked)' "$RUNNER_TEMP/sync.log" || true
           echo "exit $rc"
           exit $rc
 
