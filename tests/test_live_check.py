@@ -180,7 +180,7 @@ def test_unparseable_deploy_id_is_none_not_zero_days():
 
 # --------------------------------------------- served half of the identity
 
-def _fake_site(monkeypatch, left_out_robots="noindex,follow"):
+def _fake_site(monkeypatch, left_out_robots="noindex,follow", serve=lambda u: None, **b_over):
     """A tiny served site: 3 watch pages, 2 in the sitemap, 1 left out."""
     home = ('<html><head><title>FlixShows - Find it.</title></head>'
             '<body><img src="https://img.flixshows.me/static/img/b1.jpg"></body></html>')
@@ -202,10 +202,10 @@ def _fake_site(monkeypatch, left_out_robots="noindex,follow"):
         "https://flixshows.me/deploy-id.txt": L.Resp(200, "u", {}, "20260926T000000Z-1"),
     }
     nf = L.Resp(404, "u", {}, "<title>Page not found - FlixShows</title>")
-    monkeypatch.setattr(L, "fetch", lambda url: routes.get(url, nf))
+    monkeypatch.setattr(L, "fetch", lambda url: serve(url) or routes.get(url, nf))
     import time
     monkeypatch.setattr(time, "time", lambda: 1790500000.0)
-    b = {**B, "sitemap_min_locs": 1, "left_out_sample": 5, "home_title_prefix": "FlixShows"}
+    b = {**B, "sitemap_min_locs": 1, "left_out_sample": 5, "home_title_prefix": "FlixShows", **b_over}
     return L.run(b, random.Random(1))
 
 
@@ -291,75 +291,37 @@ def test_the_client_side_card_template_is_not_a_card():
     assert "watch/'+e.s+'" not in shelf
 
 
-# ------------------------------------------------- sitemaps and episode sitemaps
+# --------------------------------------------------- the title sitemap
 
-def _sitemaps(monkeypatch, eps_declared, eps_served=None, main_locs=3, ep_locs=2, cut=()):
-    """robots.txt declaring the title sitemap and the given episode sitemaps."""
-    site = B["site"].rstrip("/")
-    urlset = lambda path, n, i: ("<urlset>" + "".join(f"<loc>{site}/{path}/{i}-{k}</loc>" for k in range(n))
-                                 + ("" if i in cut else "</urlset>"))
-    routes = {f"{site}/robots.txt": L.Resp(200, "u", {}, "\n".join(
-        [f"Sitemap: {site}/sitemap.xml"] + [f"Sitemap: {site}/sitemap-episodes-{i}.xml" for i in eps_declared])),
-        f"{site}/sitemap.xml": L.Resp(200, "u", {}, urlset("watch", main_locs, 0))}
-    for i in (eps_served if eps_served is not None else eps_declared):
-        routes[f"{site}/sitemap-episodes-{i}.xml"] = L.Resp(200, "u", {}, urlset("episode", ep_locs, i))
-    nf = L.Resp(404, "u", {}, "<title>Page not found - FlixShows</title>")
-    monkeypatch.setattr(L, "fetch", lambda url: routes.get(url, nf))
-    b = {**B, "sitemap_min_locs": 3, "episode_sitemaps_min": 2, "episode_sitemap_min_locs": 4}
-    return L.run(b, random.Random(1))
-
-
-def test_episode_sitemaps_may_grow_past_the_committed_count(monkeypatch):
-    probs, m = _sitemaps(monkeypatch, [1, 2, 3])
-    assert not [p for p in probs if "robots.txt sitemap" in p or "floor" in p], probs
-    assert m["sitemap_locs"] == 3 and m["episode_sitemaps_locs"] == 6
-
-
-def test_a_gap_in_the_episode_sitemaps_fires(monkeypatch):
-    probs, _ = _sitemaps(monkeypatch, [1, 3])
-    assert any("robots.txt sitemap declarations wrong" in p and "sitemap-episodes-2" in p for p in probs)
-
-
-def test_fewer_episode_sitemaps_than_committed_fires(monkeypatch):
-    probs, _ = _sitemaps(monkeypatch, [1], eps_served=[1, 2])
-    assert any("robots.txt sitemap declarations wrong" in p for p in probs)
+SM = "https://flixshows.me/sitemap.xml"
 
 
 def test_a_sitemap_cut_short_fires(monkeypatch):
-    probs, _ = _sitemaps(monkeypatch, [1, 2], cut=(2,))
-    assert any("sitemap-episodes-2.xml: no closing </urlset>" in p for p in probs)
+    cut = L.Resp(200, "u", {}, "<urlset><loc>https://flixshows.me/watch/a</loc>")
+    probs, _ = _fake_site(monkeypatch, serve={SM: cut}.get)
+    assert f"{SM}: no closing </urlset>, cut short in serving or in this read" in probs, probs
 
 
-def test_episode_urls_do_not_hide_a_collapsed_title_sitemap(monkeypatch):
-    probs, _ = _sitemaps(monkeypatch, [1, 2], main_locs=1, ep_locs=50)
-    assert any(p.startswith("sitemap: 1 URLs, under the committed floor") for p in probs), probs
+def test_a_collapsed_title_sitemap_fires(monkeypatch):
+    probs, _ = _fake_site(monkeypatch, sitemap_min_locs=3)
+    assert any(p.startswith("sitemap: 2 URLs, under the committed floor of 3") for p in probs), probs
 
 
-def test_collapsed_episode_sitemaps_fire(monkeypatch):
-    probs, _ = _sitemaps(monkeypatch, [1, 2], ep_locs=1)
-    assert any(p.startswith("episode sitemaps: 2 URLs, under the committed floor") for p in probs), probs
+def test_a_sitemap_over_the_protocol_limit_fires(monkeypatch):
+    probs, _ = _fake_site(monkeypatch, sitemap_max_locs=1)
+    assert f"{SM} holds 2 URLs, over the 1 protocol limit" in probs, probs
 
 
-def test_one_file_over_the_protocol_limit_fires(monkeypatch):
-    monkeypatch.setitem(B, "sitemap_max_locs", 3)
-    probs, _ = _sitemaps(monkeypatch, [1, 2], ep_locs=4)
-    assert any("sitemap-episodes-1.xml holds 4 URLs, over the 3 protocol limit" in p for p in probs)
+def test_robots_without_sitemap_lines_and_no_episode_sitemaps_are_clean(monkeypatch):
+    """The site since 2026-10-27: robots.txt declares no sitemap, episode sitemaps 404."""
+    robots = L.Resp(200, "u", {}, "User-agent: *\nAllow: /\n")
+    probs, m = _fake_site(monkeypatch, serve={"https://flixshows.me/robots.txt": robots}.get)
+    assert not [p for p in probs if "robots" in p or "sitemap" in p.lower()], probs
+    assert m["sitemap_locs"] == 2
 
 
-def test_an_episode_number_the_series_lacks_must_be_a_404(monkeypatch):
-    """worker/episode renders any number its route matches unless it checks the
-    season's count, and that soft 200 is invisible to a probe like ci-probe-N."""
-    site = B["site"].rstrip("/")
-    ep = lambda n: f"{site}/episode/show-2020-season-1-episode-{n}"
-    routes = {f"{site}/robots.txt": L.Resp(200, "u", {}, f"Sitemap: {site}/sitemap-episodes-1.xml"),
-              f"{site}/sitemap-episodes-1.xml": L.Resp(200, "u", {},
-                  f"<urlset><loc>{ep(1)}</loc><loc>{ep(2)}</loc></urlset>")}
-    nf = L.Resp(404, "u", {}, "<title>Page not found - FlixShows</title>")
-    page = lambda u: L.Resp(200, u, {}, f'<title>Show - FlixShows</title><link rel="canonical" href="{u}">')
-    b = {**B, "sitemaps": [], "sitemap_min_locs": 0, "episode_sitemaps_min": 1, "episode_sitemap_min_locs": 2}
-    for checks_count in (False, True):
-        real = lambda u: "-episode-" in u and not (checks_count and u.endswith("-99999"))
-        monkeypatch.setattr(L, "fetch", lambda u: routes.get(u) or (page(u) if real(u) else nf))
-        probs, _ = L.run(b, random.Random(1))
-        soft = [p for p in probs if p.startswith(ep(99999) + ": a nonexistent URL returned HTTP 200")]
-        assert bool(soft) is not checks_count, probs
+def test_an_episode_path_that_does_not_exist_must_be_a_404(monkeypatch):
+    """No sitemap lists /episode/ pages, so the sample never reaches the episode Worker."""
+    page = L.Resp(200, "u", {}, "<title>FlixShows</title>")
+    probs, _ = _fake_site(monkeypatch, serve=lambda u: page if "/episode/ci-probe-" in u else None)
+    assert any("/episode/ci-probe-" in p and "returned HTTP 200" in p for p in probs), probs
