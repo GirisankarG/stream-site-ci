@@ -18,8 +18,5 @@
   "_allowed_external_why": "Both measured in a browser on 2026-09-24 and both chosen: Simple Analytics (Arun asked for it, 2026-09-20) and the Cloudflare Pages beacon (auto-injected at runtime, so it is permitted, not required). Any third host fails. The property that survives is 'no third-party PLAYER bytes before a click', not 'no third party'.",
   "deploy_max_age_days": 10,
   "_deploy_max_age_why": "Deploys ran every few days in September; 10 days is generous enough that a quiet week does not page. Parsed from deploy-id.txt's own leading UTC timestamp.",
-  "left_out_sample": 20,
-  "episode_sitemaps_min": 5,
-  "episode_sitemap_min_locs": 100000,
-  "_why_episodes": "Episode sitemaps (2026-10-16): 5 files, 199,496 URLs. The floor is about half, a collapse guard like sitemap_min_locs; the file count only has a minimum because the build adds a file every 45,000 episodes."
+  "left_out_sample": 20
 }

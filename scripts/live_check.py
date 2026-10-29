@@ -59,7 +59,6 @@ _TITLE = re.compile(r"<title>([^<]*)</title>", re.I)
 _ROBOTS = re.compile(r'<meta\s+name="robots"\s+content="([^"]*)"', re.I)
 _CANON = re.compile(r'<link\s+rel="canonical"\s+href="([^"]*)"', re.I)
 _LOC = re.compile(r"<loc>([^<]*)</loc>")
-_SITEMAP_DECL = re.compile(r"^Sitemap:\s*(\S+)\s*$", re.M | re.I)
 # Tags that make the browser fetch bytes from the host in the attribute.
 _FETCHING = re.compile(
     r'<(script|iframe|img|source|video|audio|embed)\b[^>]*?\bsrc="(?:https?:)?//([^/"?#]+)'
@@ -276,50 +275,36 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
         if h1s != 1:
             P.append(f"the homepage has {h1s} h1 elements, not exactly 1")
 
-    # 2) robots.txt declares exactly the committed sitemap set, plus the
-    # episode sitemaps: the build splits those at 45,000 URLs, so their number
-    # grows on its own. Numbered from 1 with no gap, never fewer than committed.
+    # 2) robots.txt is served. Which sitemaps it declares is the site's choice
+    # (since 2026-10-27 it declares none and the episode sitemaps are gone);
+    # step 3 reads the title sitemap from the baseline list either way.
     rb = fetch(site + "/robots.txt")
-    declared = set(_SITEMAP_DECL.findall(rb.body)) if rb.status == 200 else set()
-    ep_re = re.compile(re.escape(site) + r"/sitemap-episodes-(\d+)\.xml")
-    n_ep = max(b["episode_sitemaps_min"], sum(1 for s in declared if ep_re.fullmatch(s)))
-    episode_maps = [f"{site}/sitemap-episodes-{i}.xml" for i in range(1, n_ep + 1)]
-    want = set(b["sitemaps"]) | set(episode_maps)
     M["robots_status"] = rb.status
     if rb.status != 200:
         P.append(f"robots.txt: HTTP {rb.status} {rb.error}".strip())
-    elif declared != want:
-        P.append(f"robots.txt sitemap declarations wrong: missing {sorted(want - declared)}, "
-                 f"unexpected {sorted(declared - want)}")
 
     # 3) Sitemaps: well-formed, within the committed band, every loc clean.
-    # The floors are per group, or 199,496 episode URLs would hide a collapsed
-    # title sitemap; the protocol limit is per file.
     locs: list[str] = []
-    for group, maps, floor in (("sitemap", b["sitemaps"], b["sitemap_min_locs"]),
-                               ("episode sitemaps", episode_maps, b["episode_sitemap_min_locs"])):
-        n = 0
-        for sm in maps:
-            r = fetch(sm)
-            if r.status != 200:
-                P.append(f"{sm}: HTTP {r.status} {r.error}".strip())
-                continue
-            if "<sitemapindex" in r.body[:2000]:
-                # Not silently mis-counted: the checker must be taught the index.
-                P.append(f"{sm} became a sitemap INDEX; this checker counts urlset locs only and "
-                         "must be updated before its counts mean anything")
-                continue
-            if "</urlset>" not in r.body[-200:]:
-                P.append(f"{sm}: no closing </urlset>, cut short in serving or in this read")
-            got = _LOC.findall(r.body)
-            if len(got) > b["sitemap_max_locs"]:
-                P.append(f"{sm} holds {len(got)} URLs, over the {b['sitemap_max_locs']} protocol limit")
-            n += len(got)
-            locs += got
-        M[f"{group.replace(' ', '_')}_locs"] = n
-        if n < floor:
-            P.append(f"{group}: {n} URLs, under the committed floor of {floor}: "
-                     "a collapsed or partial deploy")
+    for sm in b["sitemaps"]:
+        r = fetch(sm)
+        if r.status != 200:
+            P.append(f"{sm}: HTTP {r.status} {r.error}".strip())
+            continue
+        if "<sitemapindex" in r.body[:2000]:
+            # Not silently mis-counted: the checker must be taught the index.
+            P.append(f"{sm} became a sitemap INDEX; this checker counts urlset locs only and "
+                     "must be updated before its counts mean anything")
+            continue
+        if "</urlset>" not in r.body[-200:]:
+            P.append(f"{sm}: no closing </urlset>, cut short in serving or in this read")
+        got = _LOC.findall(r.body)
+        if len(got) > b["sitemap_max_locs"]:
+            P.append(f"{sm} holds {len(got)} URLs, over the {b['sitemap_max_locs']} protocol limit")
+        locs += got
+    M["sitemap_locs"] = len(locs)
+    if len(locs) < b["sitemap_min_locs"]:
+        P.append(f"sitemap: {len(locs)} URLs, under the committed floor of {b['sitemap_min_locs']}: "
+                 "a collapsed or partial deploy")
     clean = re.compile(rf"^{re.escape(site)}(/\S*)?$")
     bad = [u for u in locs if not clean.match(u)]
     html_suffix = [u for u in locs if urllib.parse.urlsplit(u).path.endswith(".html")]
@@ -387,14 +372,12 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
                      f"indexable, e.g. {indexable[:3]}: the sitemap dropped pages the build meant "
                      "to include")
 
-    # 5) Real 404s on every path type the sitemap uses, plus the bare root.
+    # 5) Real 404s on every path type the sitemap uses, plus the bare root, plus
+    # /episode/: its Worker serves a path no sitemap lists any more.
     token = f"ci-probe-{rng.randrange(10**8)}"
     probes = [f"{site}/{token}"] + [f"{site}/{seg}/{token}" for seg in M["sampled_types"]
                                     if seg != "(root)"]
-    # A real series with an episode it does not have: the Worker renders any
-    # number the route matches unless it checks the season's count.
-    probes += [re.sub(r"-episode-\d+$", "-episode-99999", u)
-               for u in sample if "/episode/" in u][:1]
+    probes = list(dict.fromkeys(probes + [f"{site}/episode/{token}"]))
     for u in probes:
         P += judge_404(u, fetch(u), b, home_title)
     M["not_found_probes"] = len(probes)
