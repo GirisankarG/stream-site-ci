@@ -1,0 +1,90 @@
+name: Log budget
+
+# Workers Logs on the FlixShows Cloudflare account (Free plan, 200,000 events
+# a day, the rest dropped). Arun, 2026-10-29: "pause all logs, always do it
+# under limit, add CI check, log in such a way so only get needed info".
+#
+# scripts/log_budget.py counts the account's events for the last 24 h, no
+# filter, and mails past half the plan. With per-request records off a quiet
+# day can log nothing, so it first makes one error itself (a signed relay
+# request for a page the site does not have, answered 502) and requires that
+# event to arrive: an unreadable count, or a 5xx that no longer logs, is red.
+# It prints no token, signature or signed URL.
+
+on:
+  schedule:
+    - cron: '53 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: log-budget
+  cancel-in-progress: false
+
+jobs:
+  log-budget:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to start without the secrets
+        id: require-secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: |
+          missing=""
+          for v in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID PROXY_SECRET RESEND_API_KEY ALERT_EMAIL ALERT_FROM; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+          if [ -n "$missing" ]; then
+            echo "::error::not set on this repository:$missing"
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Prove the checker still fires
+        id: tests
+        run: pip install --quiet pytest && python -m pytest tests/test_log_budget.py -q
+
+      - name: Count the log events, and prove an error lands
+        id: budget
+        if: steps.tests.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+        run: python scripts/log_budget.py --summary summary.json
+
+      - uses: actions/cache/restore@v4
+        if: always()
+        with:
+          path: mailstate
+          key: log-budget-mail-${{ github.run_id }}
+          restore-keys: log-budget-mail-
+
+      - name: Report
+        if: always()
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+        run: python scripts/report.py --summary summary.json --suite "Log budget" --state mailstate/mail.json
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: mailstate
+          key: log-budget-mail-${{ github.run_id }}

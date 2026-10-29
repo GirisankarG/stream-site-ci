@@ -60,10 +60,11 @@ WATCHED = {
     "data-health.yml": ("Measure what the sync wrote", 50),
     "leak-scan.yml": ("Scan for the source's name", 50),
     "play-check.yml": ("Press play in our own player", 50),
+    "log-budget.yml": ("Count the log events, and prove an error lands", 50),
 }
 KEEPALIVE = ["live-check.yml", "checks.yml", "live-behaviour.yml", "relay.yml",
              "stream-liveness.yml", "sync.yml", "data-health.yml",
-             "leak-scan.yml", "play-check.yml", "watchdog.yml"]
+             "leak-scan.yml", "play-check.yml", "log-budget.yml", "watchdog.yml"]
 
 
 def api(method: str, path: str) -> tuple[int, object]:
