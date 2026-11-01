@@ -113,6 +113,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          EPISODE_URL_KEY: ${{ secrets.EPISODE_URL_KEY }}
           PYTHON: python
         run: |
           set +e
