@@ -6,10 +6,9 @@ name: Leak scan
 # derives the names from the private code on each run, masks every one before
 # printing, and reports where a name appears, never the name.
 #
-# BASELINE: commit messages before it are not scanned. One there (882e8b3,
-# 2026-09-24) names the source and only a rewrite of this public history can
-# remove it, which is Arun's decision. Leave the baseline alone; moving it
-# forward would stop scanning commits nobody has looked at.
+# BASELINE: commit messages before it are not scanned. It is this repo's first
+# commit: the history was rewritten on 2026-11-10 (Arun's go) so no file or
+# message in it names a source, so every message after the first is scanned.
 
 on:
   schedule:
@@ -24,7 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BASELINE: 893df0c10e2009a7836579b44b57e42780158baf
+  BASELINE: 0bd36416591655e7644297825721cda6eab1bd39
 
 jobs:
   leak-scan:
