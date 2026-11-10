@@ -110,10 +110,13 @@ jobs:
         id: build
         working-directory: code
         # The episode sitemap signs its URLs (build.py refuses without the key,
-        # 2026-11-02); every checks run was red on it until 11-10.
+        # 2026-11-02); every checks run was red on it until 11-10. The hero's
+        # source art is a signed relay URL (2026-11-11), so the build needs the
+        # relay and its secret too, as the deploy has them.
         env:
           EPISODE_URL_KEY: ${{ secrets.EPISODE_URL_KEY }}
-        run: python site/build.py --base-url https://flixshows.me
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+        run: python site/build.py --base-url https://flixshows.me --hls-relay https://hls.flixshows.me
 
       # Deploys run from a laptop, not from git. On 2026-09-24 the live site
       # carried 98 titles no pushed commit builds, so these checks were testing
