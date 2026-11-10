@@ -353,7 +353,17 @@ def run(b: dict, rng: random.Random) -> tuple[list[str], dict]:
                   for u in locs if "/watch/" in u}
     M["watch_served"], M["watch_in_sitemap"] = len(served), len(in_sitemap)
     if served:
-        orphans = in_sitemap - served
+        # The search index lists one entry a show since seasons were merged
+        # into one card (stream-site efde74f, 2026-11-07), so a show's later
+        # season pages are in the sitemap but not in the index. Those are
+        # asked for directly: served means it answers 200, not that the index
+        # names it. 542 such pages on 11-10, about a minute at 16 at once.
+        rest = sorted(in_sitemap - served)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(16) as ex:
+            codes = list(ex.map(lambda slug: fetch(f"{site}/watch/{slug}").status, rest))
+        M["watch_served_outside_index"] = sum(1 for c in codes if c == 200)
+        orphans = {slug for slug, c in zip(rest, codes) if c != 200}
         if orphans:
             P.append(f"the sitemap advertises {len(orphans)} watch pages the site does not serve, "
                      f"e.g. {sorted(orphans)[:3]}")

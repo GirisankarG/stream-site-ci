@@ -109,6 +109,10 @@ jobs:
       - name: Build
         id: build
         working-directory: code
+        # The episode sitemap signs its URLs (build.py refuses without the key,
+        # 2026-11-02); every checks run was red on it until 11-10.
+        env:
+          EPISODE_URL_KEY: ${{ secrets.EPISODE_URL_KEY }}
         run: python site/build.py --base-url https://flixshows.me
 
       # Deploys run from a laptop, not from git. On 2026-09-24 the live site
