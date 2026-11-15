@@ -20,6 +20,12 @@ on:
         type: choice
         options: [deployed, main]
         default: deployed
+      ref:
+        # A branch's run mails nothing and keeps no mail state: its red would
+        # otherwise mail, and the next green cron on main would mail "recovered".
+        description: "akv2011/stream-site branch whose checks run. Not main: no mail"
+        type: string
+        default: main
 
 permissions:
   contents: read
@@ -58,7 +64,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: akv2011/stream-site
-          ref: main
+          ref: ${{ inputs.ref || 'main' }}
           ssh-key: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
           path: code
 
@@ -104,7 +110,13 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
           ALERT_FROM: ${{ secrets.ALERT_FROM }}
-        run: python scripts/report.py --summary summary.json --suite "Play check" --state mailstate/mail.json
+          REF: ${{ inputs.ref || 'main' }}
+        run: |
+          if [ "$REF" = main ]; then
+            python scripts/report.py --summary summary.json --suite "Play check" --state mailstate/mail.json
+          else
+            python scripts/report.py --summary summary.json --suite "Play check" --dry-run
+          fi
 
       - uses: actions/cache/save@v4
         if: always()
